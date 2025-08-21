@@ -79,20 +79,27 @@ class SMSReader(private val context: Context) {
                         processedMessages++
                         val progress = 20 + (processedMessages * 70 / totalMessages)
 
-                        // Show detailed progress every 10 messages or at key intervals
-                        val progressMessage = when {
-                            processedMessages % 50 == 0 && processedMessages > 0 -> {
-                                "Processed $processedMessages out of $totalMessages messages (${transactions.size} transactions found so far)"
+                        // Show progress updates less frequently to prevent UI overlapping
+                        if (processedMessages % 25 == 0 || processedMessages <= 5 || processedMessages == totalMessages) {
+                            val progressMessage = when {
+                                processedMessages == totalMessages -> {
+                                    "Processed all $totalMessages messages, found ${transactions.size} transactions"
+                                }
+                                processedMessages >= totalMessages * 0.75 -> {
+                                    "Almost done... ($processedMessages / $totalMessages)"
+                                }
+                                processedMessages >= totalMessages * 0.5 -> {
+                                    "Processing messages... ($processedMessages / $totalMessages)"
+                                }
+                                processedMessages >= totalMessages * 0.25 -> {
+                                    "Analyzing SMS messages... ($processedMessages / $totalMessages)"
+                                }
+                                else -> {
+                                    "Starting analysis... ($processedMessages / $totalMessages)"
+                                }
                             }
-                            processedMessages % 10 == 0 || processedMessages <= 5 -> {
-                                "Processing message $processedMessages of $totalMessages"
-                            }
-                            else -> {
-                                "Analyzing messages... ($processedMessages / $totalMessages completed)"
-                            }
+                            onProgress(progress, progressMessage)
                         }
-
-                        onProgress(progress, progressMessage)
 
                         // Check if this looks like a transaction SMS
                         if (parser.isTransactionSMS(smsBody)) {

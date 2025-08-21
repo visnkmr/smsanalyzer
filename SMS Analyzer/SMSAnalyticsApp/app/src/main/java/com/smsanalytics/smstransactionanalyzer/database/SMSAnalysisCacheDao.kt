@@ -58,4 +58,16 @@ interface SMSAnalysisCacheDao {
     // Get unprocessed message IDs (for incremental processing)
     @Query("SELECT messageId FROM sms_analysis_cache WHERE processedAt < :cutoffTime ORDER BY messageId DESC")
     suspend fun getStaleMessageIds(cutoffTime: Long = System.currentTimeMillis() - 24 * 60 * 60 * 1000): List<Long>
+
+    // Get cached transactions (excluding those marked as excluded)
+    @Query("SELECT * FROM sms_analysis_cache WHERE hasTransaction = 1 AND isExcluded = 0 ORDER BY timestamp DESC")
+    suspend fun getCachedTransactions(): List<SMSAnalysisCache>
+
+    // Mark a message as excluded
+    @Query("UPDATE sms_analysis_cache SET isExcluded = 1 WHERE messageId = :messageId")
+    suspend fun markMessageAsExcluded(messageId: Long)
+
+    // Get last analysis metadata
+    @Query("SELECT * FROM analysis_metadata ORDER BY lastAnalysisDate DESC LIMIT 1")
+    suspend fun getLastAnalysisMetadata(): AnalysisMetadata?
 }

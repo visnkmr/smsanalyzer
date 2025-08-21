@@ -30,10 +30,14 @@ import com.smsanalytics.smstransactionanalyzer.export.CompressionType
 import com.smsanalytics.smstransactionanalyzer.model.DailySummary
 import com.smsanalytics.smstransactionanalyzer.model.MonthlySummary
 import com.smsanalytics.smstransactionanalyzer.model.Transaction
+import com.smsanalytics.smstransactionanalyzer.model.ExcludedMessage
+import com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache
+import com.smsanalytics.smstransactionanalyzer.model.AnalysisMetadata
 import com.smsanalytics.smstransactionanalyzer.sms.SMSReader
 import com.smsanalytics.smstransactionanalyzer.ui.theme.SMSAnalyticsAppTheme
 import com.smsanalytics.smstransactionanalyzer.ui.CategoryRulesScreen
 import com.smsanalytics.smstransactionanalyzer.ui.MessageBrowserScreen
+import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -46,6 +50,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var smsReader: SMSReader
     private lateinit var calculator: SpendingCalculator
     private lateinit var exportManager: ExportManager
+    private lateinit var database: SMSDatabase
 
     private var transactions by mutableStateOf<List<Transaction>>(emptyList())
     private var dailySummaries by mutableStateOf<List<DailySummary>>(emptyList())
@@ -70,6 +75,7 @@ class MainActivity : ComponentActivity() {
         smsReader = SMSReader(this)
         calculator = SpendingCalculator()
         exportManager = ExportManager(this)
+        database = SMSDatabase.getInstance(this)
 
         hasPermission = smsReader.hasSMSPermission()
 
@@ -102,41 +108,122 @@ class MainActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             try {
-                // Step 1: Read SMS with progress
-                transactions = smsReader.readTransactionSMS { progressVal, message ->
-                    progressValue = progressVal
-                    progressMessage = message
+                // Step 1: Check for cached data first
+                progressValue = 5
+                progressMessage = "Checking for cached data..."
+                kotlinx.coroutines.delay(100)
+
+                val lastAnalysis = database.smsAnalysisCacheDao().getLastAnalysisMetadata()
+                val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+                val shouldUseCache = shouldUseCachedData(lastAnalysis, cachedTransactions)
+
+                if (shouldUseCache && cachedTransactions.isNotEmpty()) {
+                    // Use cached data
+                    progressValue = 10
+                    progressMessage = "Loading from cache..."
+                    kotlinx.coroutines.delay(100)
+
+                    transactions = cachedTransactions.map { cache ->
+                        Transaction(
+                            amount = cache.transactionAmount ?: 0.0,
+                            type = cache.transactionType ?: com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT,
+                            description = cache.messageBody,
+                            date = Date(cache.timestamp),
+                            smsBody = cache.messageBody,
+                            sender = cache.sender
+                        )
+                    }
+
+                    // Step 2: Calculate spending from cached data
+                    progressValue = 20
+                    progressMessage = "Calculating spending from cache..."
+                    kotlinx.coroutines.delay(100)
+
+                    dailySummaries = calculator.calculateDailySpending(transactions)
+
+                    progressValue = 30
+                    progressMessage = "Calculating monthly summaries..."
+                    kotlinx.coroutines.delay(100)
+
+                    monthlySummaries = calculator.calculateMonthlySpending(transactions)
+
+                    progressValue = 90
+                    progressMessage = "Data loaded from cache!"
+                    kotlinx.coroutines.delay(300)
+
+                    progressValue = 100
+                    progressMessage = "Loaded ${transactions.size} transactions from cache"
+
+                } else {
+                    // Process fresh SMS data
+                    progressValue = 10
+                    progressMessage = "No valid cache found, processing SMS messages..."
+                    kotlinx.coroutines.delay(100)
+
+                    // Step 2: Read SMS with progress
+                    val allTransactions = smsReader.readTransactionSMS { progressVal, message ->
+                        progressValue = progressVal
+                        progressMessage = message
+                    }
+
+                    // Step 3: Filter out excluded transactions
+                    progressValue = 20
+                    progressMessage = "Filtering excluded transactions..."
+                    kotlinx.coroutines.delay(100)
+
+                    val excludedMessageIds = database.excludedMessageDao().getAllExcludedMessageIds()
+                    transactions = allTransactions.filter { transaction ->
+                        !isTransactionExcluded(transaction, excludedMessageIds)
+                    }
+
+                    // Step 4: Update cache with new data
+                    progressValue = 30
+                    progressMessage = "Updating cache..."
+                    kotlinx.coroutines.delay(100)
+
+                    updateCacheWithTransactions(allTransactions)
+
+                    // Step 5: Calculate spending
+                    progressValue = 40
+                    progressMessage = "Calculating daily spending for ${transactions.size} transactions..."
+                    kotlinx.coroutines.delay(100)
+
+                    dailySummaries = calculator.calculateDailySpending(transactions)
+
+                    progressValue = 50
+                    progressMessage = "Found ${dailySummaries.size} days with transactions"
+                    kotlinx.coroutines.delay(100)
+
+                    // Step 6: Calculate monthly spending
+                    progressValue = 60
+                    progressMessage = "Calculating monthly spending from ${dailySummaries.size} daily summaries..."
+                    kotlinx.coroutines.delay(100)
+
+                    monthlySummaries = calculator.calculateMonthlySpending(transactions)
+
+                    progressValue = 70
+                    progressMessage = "Completed analysis: ${dailySummaries.size} days, ${monthlySummaries.size} months"
+                    kotlinx.coroutines.delay(100)
+
+                    // Step 7: Save analysis metadata
+                    progressValue = 80
+                    progressMessage = "Saving analysis metadata..."
+                    kotlinx.coroutines.delay(100)
+
+                    val analysisMetadata = AnalysisMetadata(
+                        totalMessagesProcessed = allTransactions.size,
+                        lastProcessedMessageId = allTransactions.maxOfOrNull { it.date.time } ?: 0,
+                        lastProcessedTimestamp = System.currentTimeMillis()
+                    )
+                    database.smsAnalysisCacheDao().insertAnalysisMetadata(analysisMetadata)
+
+                    progressValue = 90
+                    progressMessage = "Finalizing analysis..."
+                    kotlinx.coroutines.delay(300)
+
+                    progressValue = 100
+                    progressMessage = "Analysis complete! Found ${transactions.size} transactions"
                 }
-
-                // Step 2: Calculate daily spending
-                progressValue = 10
-                progressMessage = "Calculating daily spending for ${transactions.size} transactions..."
-                kotlinx.coroutines.delay(100)
-
-                dailySummaries = calculator.calculateDailySpending(transactions)
-
-                progressValue = 15
-                progressMessage = "Found ${dailySummaries.size} days with transactions"
-                kotlinx.coroutines.delay(100)
-
-                // Step 3: Calculate monthly spending
-                progressValue = 18
-                progressMessage = "Calculating monthly spending from ${dailySummaries.size} daily summaries..."
-                kotlinx.coroutines.delay(100)
-
-                monthlySummaries = calculator.calculateMonthlySpending(transactions)
-
-                progressValue = 25
-                progressMessage = "Completed analysis: ${dailySummaries.size} days, ${monthlySummaries.size} months"
-                kotlinx.coroutines.delay(100)
-
-                // Step 4: Finalizing
-                progressValue = 90
-                progressMessage = "Finalizing analysis..."
-                kotlinx.coroutines.delay(300) // Brief delay for UX
-
-                progressValue = 100
-                progressMessage = "Analysis complete! Found ${transactions.size} transactions"
 
             } catch (e: Exception) {
                 progressMessage = "Error: ${e.message}"
@@ -146,6 +233,40 @@ class MainActivity : ComponentActivity() {
                 isLoading = false
             }
         }
+    }
+
+    private fun isTransactionExcluded(transaction: Transaction, excludedIds: List<Long>): Boolean {
+        // Simple exclusion logic based on transaction content
+        // In a more sophisticated implementation, we would have transaction IDs
+        val transactionSignature = "${transaction.description}_${transaction.amount}_${transaction.date.time}"
+        val signatureHash = transactionSignature.hashCode().toLong()
+
+        return excludedIds.contains(signatureHash)
+    }
+
+    private fun shouldUseCachedData(lastAnalysis: AnalysisMetadata?, cachedTransactions: List<SMSAnalysisCache>): Boolean {
+        if (lastAnalysis == null || cachedTransactions.isEmpty()) return false
+
+        // Use cache if analysis was done within the last hour
+        val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000)
+        return lastAnalysis.lastAnalysisDate > oneHourAgo
+    }
+
+    private suspend fun updateCacheWithTransactions(transactions: List<Transaction>) {
+        val cacheEntries = transactions.map { transaction ->
+            SMSAnalysisCache(
+                messageId = transaction.date.time, // Using timestamp as unique ID
+                messageBody = transaction.description,
+                sender = transaction.sender ?: "Unknown",
+                timestamp = transaction.date.time,
+                hasTransaction = true,
+                transactionAmount = transaction.amount,
+                transactionType = transaction.type,
+                isExcluded = false
+            )
+        }
+
+        database.smsAnalysisCacheDao().insertCachedMessages(cacheEntries)
     }
 
     @Composable
@@ -268,11 +389,14 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Progress message
+                // Progress message with better text handling
                 Text(
                     text = progressMessage,
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 8.dp)
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -585,9 +709,7 @@ class MainActivity : ComponentActivity() {
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            // Here we would add logic to exclude the transaction
-                            // For now, just show a toast
-                            Toast.makeText(this@MainActivity, "Transaction exclusion feature coming soon", Toast.LENGTH_SHORT).show()
+                            excludeTransaction(transaction)
                             showExcludeDialog = false
                         }
                     ) {
@@ -600,6 +722,36 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             )
+        }
+    }
+
+    private fun excludeTransaction(transaction: Transaction) {
+        lifecycleScope.launch {
+            try {
+                // Create a signature for the transaction to identify it
+                val transactionSignature = "${transaction.description}_${transaction.amount}_${transaction.date.time}"
+                val signatureHash = transactionSignature.hashCode().toLong()
+
+                // Add to excluded messages
+                val excludedMessage = ExcludedMessage(
+                    messageId = signatureHash,
+                    body = transaction.description,
+                    sender = transaction.sender ?: "Unknown",
+                    timestamp = transaction.date.time
+                )
+
+                database.excludedMessageDao().insertExcludedMessage(excludedMessage)
+
+                // Also mark as excluded in cache if it exists
+                database.smsAnalysisCacheDao().markMessageAsExcluded(transaction.date.time)
+
+                // Reload data to reflect the exclusion
+                loadTransactionData()
+
+                Toast.makeText(this@MainActivity, "Transaction excluded successfully", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Error excluding transaction: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
