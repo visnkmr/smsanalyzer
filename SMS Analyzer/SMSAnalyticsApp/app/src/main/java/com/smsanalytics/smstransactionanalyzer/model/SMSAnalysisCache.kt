@@ -15,7 +15,7 @@ data class SMSAnalysisCache(
     val transactionAmount: Double?,
     val transactionType: TransactionType?,
     val processedAt: Long = System.currentTimeMillis(),
-    val isExcluded: Boolean = false
+    val isExcluded: Boolean? = false
 )
 
 @Entity(tableName = "analysis_metadata")

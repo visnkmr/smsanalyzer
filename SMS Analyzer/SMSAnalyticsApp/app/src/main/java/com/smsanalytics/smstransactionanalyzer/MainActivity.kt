@@ -48,6 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
+import android.util.Log
 
 enum class SortOption {
     AMOUNT_DESC, // Most spend
@@ -348,18 +349,20 @@ class MainActivity : ComponentActivity() {
                 MessageBrowserScreen()
             }
             composable("vendor_management") {
-                VendorManagementScreen()
+                VendorManagementScreen(navController)
             }
             composable("sender_management") {
-                SenderManagementScreen()
+                SenderManagementScreen(navController)
             }
-            composable("vendor_sms_detail/{vendorName}") { backStackEntry ->
-                val vendorName = backStackEntry.arguments?.getString("vendorName") ?: ""
-                VendorSMSDetailScreen(vendorName = vendorName, isVendor = true)
+            composable("vendor_sms_detail/{vendorId}") { backStackEntry ->
+                val vendorId = backStackEntry.arguments?.getString("vendorId")?.toLongOrNull() ?: -1L
+                Log.d("Navigation", "Vendor SMS detail - vendorId: $vendorId")
+                VendorSMSDetailScreen(navController = navController, vendorId = vendorId, senderId = null, isVendor = true)
             }
-            composable("sender_sms_detail/{senderName}") { backStackEntry ->
-                val senderName = backStackEntry.arguments?.getString("senderName") ?: ""
-                VendorSMSDetailScreen(vendorName = senderName, isVendor = false)
+            composable("sender_sms_detail/{senderId}") { backStackEntry ->
+                val senderId = backStackEntry.arguments?.getString("senderId")?.toLongOrNull() ?: -1L
+                Log.d("Navigation", "Sender SMS detail - senderId: $senderId")
+                VendorSMSDetailScreen(navController = navController, vendorId = null, senderId = senderId, isVendor = false)
             }
             composable("transaction_sms_view") {
                 TransactionSMSViewScreen()
@@ -1391,8 +1394,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun VendorManagementScreen() {
-        val navController = rememberNavController()
+    fun VendorManagementScreen(navController: androidx.navigation.NavController) {
         var vendors by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.Vendor>>(emptyList()) }
         var isLoading by remember { mutableStateOf(true) }
         var searchQuery by remember { mutableStateOf("") }
@@ -1537,7 +1539,9 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(sortedVendors) { vendor ->
-                        VendorItem(vendor, navController)
+                        VendorItem(vendor) { vendorId ->
+                            navController.navigate("vendor_sms_detail/$vendorId")
+                        }
                     }
                 }
             }
@@ -1545,7 +1549,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun VendorItem(vendor: com.smsanalytics.smstransactionanalyzer.model.Vendor, navController: androidx.navigation.NavController) {
+    fun VendorItem(vendor: com.smsanalytics.smstransactionanalyzer.model.Vendor, onNavigateToDetail: (Long) -> Unit) {
         var showExcludeDialog by remember { mutableStateOf(false) }
 
         Card(
@@ -1553,7 +1557,8 @@ class MainActivity : ComponentActivity() {
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
                 .clickable {
-                    navController.navigate("vendor_sms_detail/${java.net.URLEncoder.encode(vendor.name, "UTF-8")}")
+                    Log.d("VendorItem", "Navigating to vendor SMS detail for '${vendor.name}' (ID: ${vendor.id})")
+                    onNavigateToDetail(vendor.id)
                 },
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
@@ -1657,8 +1662,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun SenderManagementScreen() {
-        val navController = rememberNavController()
+    fun SenderManagementScreen(navController: androidx.navigation.NavController) {
         var senders by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.Sender>>(emptyList()) }
         var isLoading by remember { mutableStateOf(true) }
         var searchQuery by remember { mutableStateOf("") }
@@ -1803,7 +1807,9 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(sortedSenders) { sender ->
-                        SenderItem(sender, navController)
+                        SenderItem(sender) { senderId ->
+                            navController.navigate("sender_sms_detail/$senderId")
+                        }
                     }
                 }
             }
@@ -1811,13 +1817,17 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun SenderItem(sender: com.smsanalytics.smstransactionanalyzer.model.Sender, navController: androidx.navigation.NavController) {
+    fun SenderItem(sender: com.smsanalytics.smstransactionanalyzer.model.Sender, onNavigateToDetail: (Long) -> Unit) {
         var showExcludeDialog by remember { mutableStateOf(false) }
 
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
+                .padding(vertical = 4.dp)
+                .clickable {
+                    Log.d("SenderItem", "Navigating to sender SMS detail for '${sender.name}' (ID: ${sender.id})")
+                    onNavigateToDetail(sender.id)
+                },
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
@@ -1920,20 +1930,87 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun VendorSMSDetailScreen(vendorName: String, isVendor: Boolean) {
-        val navController = rememberNavController()
+    fun VendorSMSDetailScreen(navController: androidx.navigation.NavController, vendorId: Long? = null, senderId: Long? = null, isVendor: Boolean) {
         var smsTransactions by remember { mutableStateOf<List<Transaction>>(emptyList()) }
         var isLoading by remember { mutableStateOf(true) }
+        var entityName by remember { mutableStateOf("") }
+
+        val entityId = if (isVendor) vendorId else senderId
+        Log.d("VendorSMSDetailScreen", "Starting VendorSMSDetailScreen with entityId: $entityId, isVendor: $isVendor")
 
         // Load SMS transactions for the selected vendor/sender
-        LaunchedEffect(vendorName) {
+        LaunchedEffect(entityId) {
             try {
-                val allTransactions = if (isVendor) {
-                    database.smsAnalysisCacheDao().getTransactionsByVendor(vendorName)
-                } else {
-                    database.smsAnalysisCacheDao().getTransactionsBySender(vendorName)
+                Log.d("VendorSMSDetailScreen", "Starting data loading process")
+
+                if (entityId == null || entityId == -1L) {
+                    Log.w("VendorSMSDetailScreen", "Invalid entity ID: $entityId")
+                    Toast.makeText(this@MainActivity, "Invalid ${if (isVendor) "vendor" else "sender"} ID", Toast.LENGTH_SHORT).show()
+                    navController.navigate("dashboard") {
+                        popUpTo("dashboard") { inclusive = false }
+                    }
+                    return@LaunchedEffect
                 }
-                smsTransactions = allTransactions.map { cache: com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache ->
+
+                // First, lookup the entity name by ID
+                Log.d("VendorSMSDetailScreen", "Looking up entity name for ID: $entityId")
+                val entity = if (isVendor) {
+                    database.vendorDao().getVendorById(entityId)
+                } else {
+                    database.senderDao().getSenderById(entityId)
+                }
+
+                if (entity == null) {
+                    Log.w("VendorSMSDetailScreen", "Entity not found for ID: $entityId")
+                    Toast.makeText(this@MainActivity, "${if (isVendor) "Vendor" else "Sender"} not found", Toast.LENGTH_SHORT).show()
+                    navController.navigate("dashboard") {
+                        popUpTo("dashboard") { inclusive = false }
+                    }
+                    return@LaunchedEffect
+                }
+
+                entityName = if (isVendor) (entity as com.smsanalytics.smstransactionanalyzer.model.Vendor).name else (entity as com.smsanalytics.smstransactionanalyzer.model.Sender).name
+                Log.d("VendorSMSDetailScreen", "Found entity name: '$entityName'")
+
+                // First check if we have any cached transactions
+                Log.d("VendorSMSDetailScreen", "Checking for cached transactions...")
+                val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+                Log.d("VendorSMSDetailScreen", "Found ${cachedTransactions.size} cached transactions")
+
+                if (cachedTransactions.isEmpty()) {
+                    Log.w("VendorSMSDetailScreen", "No cached transactions found, navigating back to dashboard")
+                    Toast.makeText(this@MainActivity, "No SMS data available. Run SMS analysis first.", Toast.LENGTH_LONG).show()
+                    navController.navigate("dashboard") {
+                        popUpTo("dashboard") { inclusive = false }
+                    }
+                    return@LaunchedEffect
+                }
+
+                // Get all cached transactions and filter manually for reliability
+                Log.d("VendorSMSDetailScreen", "Getting all cached transactions for filtering")
+                val allCachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+                Log.d("VendorSMSDetailScreen", "Retrieved ${allCachedTransactions.size} total cached transactions")
+
+                Log.d("VendorSMSDetailScreen", "Filtering transactions for sender: '$entityName'")
+                val allTransactions = allCachedTransactions.filter { cache ->
+                    val matches = cache.sender == entityName && cache.hasTransaction && (cache.isExcluded ?: false) == false
+                    Log.d("VendorSMSDetailScreen", "Transaction ${cache.messageId}: sender='${cache.sender}', hasTransaction=${cache.hasTransaction}, isExcluded=${cache.isExcluded}, matches=$matches")
+                    matches
+                }
+                Log.d("VendorSMSDetailScreen", "Found ${allTransactions.size} matching transactions")
+
+                if (allTransactions.isEmpty()) {
+                    Log.w("VendorSMSDetailScreen", "No transactions found for ${if (isVendor) "vendor" else "sender"} $entityName")
+                    Toast.makeText(this@MainActivity, "No transactions found for ${if (isVendor) "vendor" else "sender"} $entityName", Toast.LENGTH_SHORT).show()
+                    navController.navigate("dashboard") {
+                        popUpTo("dashboard") { inclusive = false }
+                    }
+                    return@LaunchedEffect
+                }
+
+                Log.d("VendorSMSDetailScreen", "Mapping ${allTransactions.size} cached transactions to Transaction objects")
+                smsTransactions = allTransactions.map { cache ->
+                    Log.d("VendorSMSDetailScreen", "Mapping transaction: amount=${cache.transactionAmount}, type=${cache.transactionType}, sender=${cache.sender}")
                     Transaction(
                         amount = cache.transactionAmount ?: 0.0,
                         type = cache.transactionType ?: com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT,
@@ -1943,9 +2020,16 @@ class MainActivity : ComponentActivity() {
                         sender = cache.sender
                     )
                 }
+                Log.d("VendorSMSDetailScreen", "Successfully mapped ${smsTransactions.size} transactions")
+
                 isLoading = false
+                Log.d("VendorSMSDetailScreen", "Data loading completed successfully")
             } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "Error loading SMS details", Toast.LENGTH_SHORT).show()
+                Log.e("VendorSMSDetailScreen", "Error loading SMS details", e)
+                Toast.makeText(this@MainActivity, "Error loading SMS details: ${e.message}", Toast.LENGTH_SHORT).show()
+                navController.navigate("dashboard") {
+                    popUpTo("dashboard") { inclusive = false }
+                }
                 isLoading = false
             }
         }
@@ -1973,7 +2057,7 @@ class MainActivity : ComponentActivity() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "${if (isVendor) "Vendor" else "Sender"}: $vendorName",
+                text = "${if (isVendor) "Vendor" else "Sender"}: $entityName",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Medium
             )
@@ -2084,7 +2168,7 @@ class MainActivity : ComponentActivity() {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             } else if (smsTransactions.isEmpty()) {
                 Text(
-                    text = "No SMS messages found for ${if (isVendor) "vendor" else "sender"} $vendorName",
+                    text = "No SMS messages found for ${if (isVendor) "vendor" else "sender"} $entityName",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
@@ -2114,7 +2198,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(sortedTransactions) { transaction ->
-                        VendorSMSDetailItem(transaction, vendorName, isVendor)
+                        VendorSMSDetailItem(transaction, entityName, isVendor)
                     }
                 }
             }
