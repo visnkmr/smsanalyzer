@@ -74,4 +74,12 @@ interface SMSAnalysisCacheDao {
     // Get last analysis metadata
     @Query("SELECT * FROM analysis_metadata ORDER BY lastAnalysisDate DESC LIMIT 1")
     suspend fun getLastAnalysisMetadata(): AnalysisMetadata?
+
+    // Get transactions by vendor name
+    @Query("SELECT * FROM sms_analysis_cache WHERE sender = :vendorName AND hasTransaction = 1 AND isExcluded = 0 ORDER BY timestamp DESC")
+    suspend fun getTransactionsByVendor(vendorName: String): List<SMSAnalysisCache>
+
+    // Get transactions by sender name
+    @Query("SELECT * FROM sms_analysis_cache WHERE sender = :senderName AND hasTransaction = 1 AND isExcluded = 0 ORDER BY timestamp DESC")
+    suspend fun getTransactionsBySender(senderName: String): List<SMSAnalysisCache>
 }

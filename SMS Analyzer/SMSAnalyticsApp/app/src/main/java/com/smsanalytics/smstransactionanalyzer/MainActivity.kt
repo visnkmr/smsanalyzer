@@ -40,10 +40,12 @@ import com.smsanalytics.smstransactionanalyzer.ui.CategoryRulesScreen
 import com.smsanalytics.smstransactionanalyzer.ui.MessageBrowserScreen
 import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
 import com.smsanalytics.smstransactionanalyzer.util.VendorExtractor
+import com.smsanalytics.smstransactionanalyzer.util.SenderExtractor
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -61,6 +63,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var exportManager: ExportManager
     private lateinit var database: SMSDatabase
     private lateinit var vendorExtractor: VendorExtractor
+    private lateinit var senderExtractor: SenderExtractor
 
     private var transactions by mutableStateOf<List<Transaction>>(emptyList())
     private var dailySummaries by mutableStateOf<List<DailySummary>>(emptyList())
@@ -73,6 +76,9 @@ class MainActivity : ComponentActivity() {
     // Sort options
     private var dailySortOption by mutableStateOf(SortOption.DATE_DESC)
     private var monthlySortOption by mutableStateOf(SortOption.DATE_DESC)
+    private var vendorSortOption by mutableStateOf(SortOption.DATE_DESC)
+    private var smsSortOption by mutableStateOf(SortOption.DATE_DESC)
+    private var smsFilterOption by mutableStateOf("ALL") // "ALL", "DEBIT", "CREDIT"
     private var hasUnsavedChanges by mutableStateOf(false)
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -92,6 +98,7 @@ class MainActivity : ComponentActivity() {
         exportManager = ExportManager(this)
         database = SMSDatabase.getInstance(this)
         vendorExtractor = VendorExtractor()
+        senderExtractor = SenderExtractor()
 
         hasPermission = smsReader.hasSMSPermission()
 
@@ -243,19 +250,37 @@ class MainActivity : ComponentActivity() {
                         hasUnsavedChanges = true
                     }
 
-                    // Step 8: Extract vendors from transactions
+                    // Step 8: Extract vendors from transactions (in background)
                     progressValue = 80
                     progressMessage = "Extracting vendors from transactions..."
                     kotlinx.coroutines.delay(100)
 
-                    val vendors = vendorExtractor.extractVendorsFromTransactions(transactions)
+                    // Extract vendors in background to prevent UI freeze
+                    val vendors = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        vendorExtractor.extractVendorsFromTransactions(transactions)
+                    }
+
+                    // Step 9: Extract senders from transactions
+                    progressValue = 85
+                    progressMessage = "Extracting senders from transactions..."
+                    kotlinx.coroutines.delay(100)
+
+                    val senders = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                        senderExtractor.extractSendersFromTransactions(transactions)
+                    }
+
                     if (vendors.isNotEmpty()) {
                         database.vendorDao().deleteAllVendors()
                         database.vendorDao().insertVendors(vendors)
                     }
 
+                    if (senders.isNotEmpty()) {
+                        database.senderDao().deleteAllSenders()
+                        database.senderDao().insertSenders(senders)
+                    }
+
                     progressValue = 100
-                    progressMessage = "Analysis complete! Found ${transactions.size} transactions and ${vendors.size} vendors"
+                    progressMessage = "Analysis complete! Found ${transactions.size} transactions, ${vendors.size} vendors, and ${senders.size} senders"
                 }
 
             } catch (e: Exception) {
@@ -325,6 +350,17 @@ class MainActivity : ComponentActivity() {
             composable("vendor_management") {
                 VendorManagementScreen()
             }
+            composable("sender_management") {
+                SenderManagementScreen()
+            }
+            composable("vendor_sms_detail/{vendorName}") { backStackEntry ->
+                val vendorName = backStackEntry.arguments?.getString("vendorName") ?: ""
+                VendorSMSDetailScreen(vendorName = vendorName, isVendor = true)
+            }
+            composable("sender_sms_detail/{senderName}") { backStackEntry ->
+                val senderName = backStackEntry.arguments?.getString("senderName") ?: ""
+                VendorSMSDetailScreen(vendorName = senderName, isVendor = false)
+            }
             composable("transaction_sms_view") {
                 TransactionSMSViewScreen()
             }
@@ -369,29 +405,79 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    IconButton(onClick = { navController.navigate("excluded_messages") }) {
-                        Text("🚫")
+                    // Navigation dropdown menu
+                    var expanded by remember { mutableStateOf(false) }
+                    IconButton(onClick = { expanded = true }) {
+                        Text("☰", style = MaterialTheme.typography.titleMedium)
                     }
-                    IconButton(onClick = { navController.navigate("credit_summaries") }) {
-                        Text("💰")
-                    }
-                    IconButton(onClick = { navController.navigate("message_browser") }) {
-                        Text("💬")
-                    }
-                    IconButton(onClick = { navController.navigate("category_rules") }) {
-                        Text("⚙️")
-                    }
-                    IconButton(onClick = { navController.navigate("vendor_management") }) {
-                        Text("🏪")
-                    }
-                    IconButton(onClick = { navController.navigate("transaction_sms_view") }) {
-                        Text("📱")
-                    }
-                    IconButton(onClick = { navController.navigate("vendor_group_management") }) {
-                        Text("👥")
-                    }
-                    IconButton(onClick = { navController.navigate("group_spending_overview") }) {
-                        Text("📊")
+
+                    DropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("🚫 Excluded Messages") },
+                            onClick = {
+                                navController.navigate("excluded_messages")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("💰 Credit Summaries") },
+                            onClick = {
+                                navController.navigate("credit_summaries")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("💬 Message Browser") },
+                            onClick = {
+                                navController.navigate("message_browser")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("⚙️ Category Rules") },
+                            onClick = {
+                                navController.navigate("category_rules")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("🏪 Vendor Management") },
+                            onClick = {
+                                navController.navigate("vendor_management")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("📱 Transaction SMS View") },
+                            onClick = {
+                                navController.navigate("transaction_sms_view")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("👥 Vendor Groups") },
+                            onClick = {
+                                navController.navigate("vendor_group_management")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("📊 Group Spending") },
+                            onClick = {
+                                navController.navigate("group_spending_overview")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("📤 Sender Management") },
+                            onClick = {
+                                navController.navigate("sender_management")
+                                expanded = false
+                            }
+                        )
                     }
                 }
             }
@@ -584,26 +670,51 @@ class MainActivity : ComponentActivity() {
                         fontWeight = FontWeight.Bold
                     )
 
-                    // Sort options
-                    Row {
-                        TextButton(
-                            onClick = { dailySortOption = SortOption.AMOUNT_DESC },
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (dailySortOption == SortOption.AMOUNT_DESC)
-                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
+                    // Sort dropdown
+                    var dailySortExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(
+                        expanded = dailySortExpanded,
+                        onExpandedChange = { dailySortExpanded = it },
+                        modifier = Modifier.width(120.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = when (dailySortOption) {
+                                SortOption.AMOUNT_DESC -> "Most Spend"
+                                SortOption.DATE_ASC -> "Oldest"
+                                else -> "Latest"
+                            },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Sort by") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dailySortExpanded) },
+                            modifier = Modifier.menuAnchor()
+                        )
+
+                        ExposedDropdownMenu(
+                            expanded = dailySortExpanded,
+                            onDismissRequest = { dailySortExpanded = false }
                         ) {
-                            Text("Most Spend", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(" | ", style = MaterialTheme.typography.labelSmall)
-                        TextButton(
-                            onClick = { dailySortOption = SortOption.DATE_ASC },
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (dailySortOption == SortOption.DATE_ASC)
-                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            DropdownMenuItem(
+                                text = { Text("Most Spend") },
+                                onClick = {
+                                    dailySortOption = SortOption.AMOUNT_DESC
+                                    dailySortExpanded = false
+                                }
                             )
-                        ) {
-                            Text("Oldest", style = MaterialTheme.typography.labelSmall)
+                            DropdownMenuItem(
+                                text = { Text("Latest") },
+                                onClick = {
+                                    dailySortOption = SortOption.DATE_DESC
+                                    dailySortExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Oldest") },
+                                onClick = {
+                                    dailySortOption = SortOption.DATE_ASC
+                                    dailySortExpanded = false
+                                }
+                            )
                         }
                     }
                 }
@@ -649,26 +760,51 @@ class MainActivity : ComponentActivity() {
                         fontWeight = FontWeight.Bold
                     )
 
-                    // Sort options
-                    Row {
-                        TextButton(
-                            onClick = { monthlySortOption = SortOption.AMOUNT_DESC },
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (monthlySortOption == SortOption.AMOUNT_DESC)
-                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
+                    // Sort dropdown
+                    var monthlySortExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(
+                        expanded = monthlySortExpanded,
+                        onExpandedChange = { monthlySortExpanded = it },
+                        modifier = Modifier.width(120.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = when (monthlySortOption) {
+                                SortOption.AMOUNT_DESC -> "Most Spend"
+                                SortOption.DATE_ASC -> "Oldest"
+                                else -> "Latest"
+                            },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Sort by") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = monthlySortExpanded) },
+                            modifier = Modifier.menuAnchor()
+                        )
+
+                        ExposedDropdownMenu(
+                            expanded = monthlySortExpanded,
+                            onDismissRequest = { monthlySortExpanded = false }
                         ) {
-                            Text("Most Spend", style = MaterialTheme.typography.labelSmall)
-                        }
-                        Text(" | ", style = MaterialTheme.typography.labelSmall)
-                        TextButton(
-                            onClick = { monthlySortOption = SortOption.DATE_ASC },
-                            colors = ButtonDefaults.textButtonColors(
-                                contentColor = if (monthlySortOption == SortOption.DATE_ASC)
-                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            DropdownMenuItem(
+                                text = { Text("Most Spend") },
+                                onClick = {
+                                    monthlySortOption = SortOption.AMOUNT_DESC
+                                    monthlySortExpanded = false
+                                }
                             )
-                        ) {
-                            Text("Oldest", style = MaterialTheme.typography.labelSmall)
+                            DropdownMenuItem(
+                                text = { Text("Latest") },
+                                onClick = {
+                                    monthlySortOption = SortOption.DATE_DESC
+                                    monthlySortExpanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Oldest") },
+                                onClick = {
+                                    monthlySortOption = SortOption.DATE_ASC
+                                    monthlySortExpanded = false
+                                }
+                            )
                         }
                     }
                 }
@@ -1152,7 +1288,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f)
                 ) {
                     items(excludedMessages) { excludedMessage ->
-                        ExcludedMessageItem(excludedMessage)
+                        ExcludedMessageItem(excludedMessage, navController)
                     }
                 }
             }
@@ -1160,11 +1296,14 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun ExcludedMessageItem(excludedMessage: ExcludedMessage) {
+    fun ExcludedMessageItem(excludedMessage: ExcludedMessage, navController: androidx.navigation.NavController) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
+                .padding(vertical = 4.dp)
+                .clickable {
+                    navController.navigate("sender_sms_detail/${java.net.URLEncoder.encode(excludedMessage.sender, "UTF-8")}")
+                },
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
@@ -1293,14 +1432,74 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Search bar
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                label = { Text("Search vendors") },
+            // Search bar and sort dropdown
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Text("🔍") }
-            )
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search vendors") },
+                    modifier = Modifier.weight(1f),
+                    leadingIcon = { Text("🔍") }
+                )
+
+                var sortExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = sortExpanded,
+                    onExpandedChange = { sortExpanded = it },
+                    modifier = Modifier.width(120.dp)
+                ) {
+                    OutlinedTextField(
+                        value = when (vendorSortOption) {
+                            SortOption.AMOUNT_DESC -> "Amount"
+                            SortOption.DATE_DESC -> "Latest"
+                            SortOption.DATE_ASC -> "Oldest"
+                            else -> "Count"
+                        },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Sort by") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Amount") },
+                            onClick = {
+                                vendorSortOption = SortOption.AMOUNT_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Transaction Count") },
+                            onClick = {
+                                vendorSortOption = SortOption.DATE_ASC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Latest") },
+                            onClick = {
+                                vendorSortOption = SortOption.DATE_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Oldest") },
+                            onClick = {
+                                vendorSortOption = SortOption.DATE_ASC
+                                sortExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -1319,8 +1518,15 @@ class MainActivity : ComponentActivity() {
                     vendors.filter { it.name.contains(searchQuery, ignoreCase = true) }
                 }
 
+                val sortedVendors = when (vendorSortOption) {
+                    SortOption.AMOUNT_DESC -> filteredVendors.sortedByDescending { it.totalSpent }
+                    SortOption.DATE_DESC -> filteredVendors.sortedByDescending { it.lastTransactionDate }
+                    SortOption.DATE_ASC -> filteredVendors.sortedBy { it.lastTransactionDate }
+                    else -> filteredVendors.sortedByDescending { it.transactionCount } // Default to transaction count
+                }
+
                 Text(
-                    text = "Found ${filteredVendors.size} vendors",
+                    text = "Found ${sortedVendors.size} vendors",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1330,8 +1536,8 @@ class MainActivity : ComponentActivity() {
                 LazyColumn(
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(filteredVendors) { vendor ->
-                        VendorItem(vendor)
+                    items(sortedVendors) { vendor ->
+                        VendorItem(vendor, navController)
                     }
                 }
             }
@@ -1339,13 +1545,16 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun VendorItem(vendor: com.smsanalytics.smstransactionanalyzer.model.Vendor) {
+    fun VendorItem(vendor: com.smsanalytics.smstransactionanalyzer.model.Vendor, navController: androidx.navigation.NavController) {
         var showExcludeDialog by remember { mutableStateOf(false) }
 
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
+                .padding(vertical = 4.dp)
+                .clickable {
+                    navController.navigate("vendor_sms_detail/${java.net.URLEncoder.encode(vendor.name, "UTF-8")}")
+                },
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
@@ -1448,6 +1657,576 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
+    fun SenderManagementScreen() {
+        val navController = rememberNavController()
+        var senders by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.Sender>>(emptyList()) }
+        var isLoading by remember { mutableStateOf(true) }
+        var searchQuery by remember { mutableStateOf("") }
+
+        // Load senders when screen is displayed
+        LaunchedEffect(Unit) {
+            try {
+                database.senderDao().getAllSenders().collect { senderList ->
+                    senders = senderList
+                    isLoading = false
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Error loading senders", Toast.LENGTH_SHORT).show()
+                isLoading = false
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Sender Management",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = { navController.navigate("dashboard") }) {
+                    Text("←")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Search bar and sort dropdown
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search senders") },
+                    modifier = Modifier.weight(1f),
+                    leadingIcon = { Text("🔍") }
+                )
+
+                var sortExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = sortExpanded,
+                    onExpandedChange = { sortExpanded = it },
+                    modifier = Modifier.width(120.dp)
+                ) {
+                    OutlinedTextField(
+                        value = when (smsSortOption) {
+                            SortOption.AMOUNT_DESC -> "Amount"
+                            SortOption.DATE_DESC -> "Latest"
+                            SortOption.DATE_ASC -> "Oldest"
+                            else -> "Count"
+                        },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Sort by") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Amount") },
+                            onClick = {
+                                smsSortOption = SortOption.AMOUNT_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Transaction Count") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_ASC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Latest") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Oldest") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_ASC
+                                sortExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else if (senders.isEmpty()) {
+                Text(
+                    text = "No senders found. Run SMS analysis first.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else {
+                val filteredSenders = if (searchQuery.isBlank()) {
+                    senders
+                } else {
+                    senders.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                }
+
+                val sortedSenders = when (smsSortOption) {
+                    SortOption.AMOUNT_DESC -> filteredSenders.sortedByDescending { it.totalSpent }
+                    SortOption.DATE_DESC -> filteredSenders.sortedByDescending { it.lastTransactionDate }
+                    SortOption.DATE_ASC -> filteredSenders.sortedBy { it.lastTransactionDate }
+                    else -> filteredSenders.sortedByDescending { it.transactionCount } // Default to transaction count
+                }
+
+                Text(
+                    text = "Found ${sortedSenders.size} senders",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(sortedSenders) { sender ->
+                        SenderItem(sender, navController)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun SenderItem(sender: com.smsanalytics.smstransactionanalyzer.model.Sender, navController: androidx.navigation.NavController) {
+        var showExcludeDialog by remember { mutableStateOf(false) }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = sender.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "₹${String.format("%.2f", sender.totalSpent)} • ${sender.transactionCount} transactions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (sender.lastTransactionDate != null) {
+                            Text(
+                                text = "Last: ${SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(sender.lastTransactionDate)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        if (sender.isExcluded) {
+                            Text(
+                                text = "EXCLUDED",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+
+                        TextButton(
+                            onClick = { showExcludeDialog = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (sender.isExcluded) "Include" else "Exclude",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (sender.isExcluded)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showExcludeDialog = false },
+                title = { Text(if (sender.isExcluded) "Include Sender" else "Exclude Sender") },
+                text = {
+                    Text(if (sender.isExcluded)
+                        "Are you sure you want to include this sender in analysis?"
+                    else
+                        "Are you sure you want to exclude this sender from analysis? This will hide all transactions from this sender."
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            toggleSenderExclusion(sender)
+                            showExcludeDialog = false
+                        }
+                    ) {
+                        Text(if (sender.isExcluded) "Include" else "Exclude")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+    }
+
+    private fun toggleSenderExclusion(sender: com.smsanalytics.smstransactionanalyzer.model.Sender) {
+        lifecycleScope.launch {
+            try {
+                database.senderDao().updateSenderExclusion(sender.id, !sender.isExcluded)
+                hasUnsavedChanges = true
+                Toast.makeText(
+                    this@MainActivity,
+                    "Sender ${if (sender.isExcluded) "included" else "excluded"} successfully",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Error updating sender: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    @Composable
+    fun VendorSMSDetailScreen(vendorName: String, isVendor: Boolean) {
+        val navController = rememberNavController()
+        var smsTransactions by remember { mutableStateOf<List<Transaction>>(emptyList()) }
+        var isLoading by remember { mutableStateOf(true) }
+
+        // Load SMS transactions for the selected vendor/sender
+        LaunchedEffect(vendorName) {
+            try {
+                val allTransactions = if (isVendor) {
+                    database.smsAnalysisCacheDao().getTransactionsByVendor(vendorName)
+                } else {
+                    database.smsAnalysisCacheDao().getTransactionsBySender(vendorName)
+                }
+                smsTransactions = allTransactions.map { cache: com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache ->
+                    Transaction(
+                        amount = cache.transactionAmount ?: 0.0,
+                        type = cache.transactionType ?: com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT,
+                        description = cache.messageBody,
+                        date = Date(cache.timestamp),
+                        smsBody = cache.messageBody,
+                        sender = cache.sender
+                    )
+                }
+                isLoading = false
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Error loading SMS details", Toast.LENGTH_SHORT).show()
+                isLoading = false
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isVendor) "Vendor SMS Details" else "Sender SMS Details",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = { navController.navigate("dashboard") }) {
+                    Text("←")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "${if (isVendor) "Vendor" else "Sender"}: $vendorName",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Controls row for filtering and sorting
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Filter dropdown
+                var filterExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = filterExpanded,
+                    onExpandedChange = { filterExpanded = it },
+                    modifier = Modifier.width(100.dp)
+                ) {
+                    OutlinedTextField(
+                        value = smsFilterOption,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Filter") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = filterExpanded,
+                        onDismissRequest = { filterExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("All") },
+                            onClick = {
+                                smsFilterOption = "ALL"
+                                filterExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Debit") },
+                            onClick = {
+                                smsFilterOption = "DEBIT"
+                                filterExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Credit") },
+                            onClick = {
+                                smsFilterOption = "CREDIT"
+                                filterExpanded = false
+                            }
+                        )
+                    }
+                }
+
+                // Sort dropdown
+                var sortExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = sortExpanded,
+                    onExpandedChange = { sortExpanded = it },
+                    modifier = Modifier.width(120.dp)
+                ) {
+                    OutlinedTextField(
+                        value = when (smsSortOption) {
+                            SortOption.AMOUNT_DESC -> "Amount"
+                            SortOption.DATE_DESC -> "Latest"
+                            else -> "Oldest"
+                        },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Sort by") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Amount") },
+                            onClick = {
+                                smsSortOption = SortOption.AMOUNT_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Latest") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Oldest") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_ASC
+                                sortExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else if (smsTransactions.isEmpty()) {
+                Text(
+                    text = "No SMS messages found for ${if (isVendor) "vendor" else "sender"} $vendorName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else {
+                // Filter and sort transactions
+                val filteredTransactions = when (smsFilterOption) {
+                    "DEBIT" -> smsTransactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT }
+                    "CREDIT" -> smsTransactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT }
+                    else -> smsTransactions
+                }
+
+                val sortedTransactions = when (smsSortOption) {
+                    SortOption.AMOUNT_DESC -> filteredTransactions.sortedByDescending { it.amount }
+                    SortOption.DATE_DESC -> filteredTransactions.sortedByDescending { it.date }
+                    else -> filteredTransactions.sortedBy { it.date }
+                }
+
+                Text(
+                    text = "Showing ${sortedTransactions.size} SMS messages",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(sortedTransactions) { transaction ->
+                        VendorSMSDetailItem(transaction, vendorName, isVendor)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun VendorSMSDetailItem(transaction: Transaction, vendorName: String, isVendor: Boolean) {
+        var showExcludeDialog by remember { mutableStateOf(false) }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        // Amount badge
+                        Surface(
+                            color = if (transaction.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
+                                MaterialTheme.colorScheme.errorContainer
+                            else
+                                MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            Text(
+                                text = "₹${String.format("%.2f", transaction.amount)}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (transaction.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                else
+                                    MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Text(
+                            text = transaction.smsBody,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "From: ${transaction.sender ?: "Unknown"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Text(
+                                text = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(transaction.date),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Exclude button
+                TextButton(
+                    onClick = { showExcludeDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(
+                        "Exclude",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+
+        if (showExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showExcludeDialog = false },
+                title = { Text("Exclude SMS Message") },
+                text = {
+                    Text("Are you sure you want to exclude this SMS message from analysis? This will prevent it from being counted in future spending calculations.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            excludeTransaction(transaction)
+                            showExcludeDialog = false
+                        }
+                    ) {
+                        Text("Exclude")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+    }
+
+    @Composable
     fun TransactionSMSViewScreen() {
         val navController = rememberNavController()
 
@@ -1473,6 +2252,106 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Controls row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Filter dropdown
+                var filterExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = filterExpanded,
+                    onExpandedChange = { filterExpanded = it },
+                    modifier = Modifier.width(100.dp)
+                ) {
+                    OutlinedTextField(
+                        value = smsFilterOption,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Filter") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = filterExpanded,
+                        onDismissRequest = { filterExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("All") },
+                            onClick = {
+                                smsFilterOption = "ALL"
+                                filterExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Debit") },
+                            onClick = {
+                                smsFilterOption = "DEBIT"
+                                filterExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Credit") },
+                            onClick = {
+                                smsFilterOption = "CREDIT"
+                                filterExpanded = false
+                            }
+                        )
+                    }
+                }
+
+                // Sort dropdown
+                var sortExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = sortExpanded,
+                    onExpandedChange = { sortExpanded = it },
+                    modifier = Modifier.width(120.dp)
+                ) {
+                    OutlinedTextField(
+                        value = when (smsSortOption) {
+                            SortOption.AMOUNT_DESC -> "Amount"
+                            SortOption.DATE_DESC -> "Latest"
+                            else -> "Oldest"
+                        },
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Sort by") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
+                        modifier = Modifier.menuAnchor()
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Amount") },
+                            onClick = {
+                                smsSortOption = SortOption.AMOUNT_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Latest") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_DESC
+                                sortExpanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Oldest") },
+                            onClick = {
+                                smsSortOption = SortOption.DATE_ASC
+                                sortExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             if (transactions.isEmpty()) {
                 Text(
                     text = "No transactions found. Run SMS analysis first.",
@@ -1480,8 +2359,21 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
             } else {
+                // Filter and sort transactions
+                val filteredTransactions = when (smsFilterOption) {
+                    "DEBIT" -> transactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT }
+                    "CREDIT" -> transactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT }
+                    else -> transactions
+                }
+
+                val sortedTransactions = when (smsSortOption) {
+                    SortOption.AMOUNT_DESC -> filteredTransactions.sortedByDescending { it.amount }
+                    SortOption.DATE_DESC -> filteredTransactions.sortedByDescending { it.date }
+                    else -> filteredTransactions.sortedBy { it.date }
+                }
+
                 Text(
-                    text = "Showing ${transactions.size} transaction SMS messages",
+                    text = "Showing ${sortedTransactions.size} transaction SMS messages",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1491,7 +2383,7 @@ class MainActivity : ComponentActivity() {
                 LazyColumn(
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(transactions) { transaction ->
+                    items(sortedTransactions) { transaction ->
                         TransactionSMSItem(transaction)
                     }
                 }

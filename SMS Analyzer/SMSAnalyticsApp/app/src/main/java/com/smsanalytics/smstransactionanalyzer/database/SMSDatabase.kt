@@ -13,10 +13,11 @@ import com.smsanalytics.smstransactionanalyzer.model.AnalysisMetadata
 import com.smsanalytics.smstransactionanalyzer.model.Vendor
 import com.smsanalytics.smstransactionanalyzer.model.VendorGroup
 import com.smsanalytics.smstransactionanalyzer.model.VendorGroupMember
+import com.smsanalytics.smstransactionanalyzer.model.Sender
 
 @Database(
-    entities = [Transaction::class, CategoryRule::class, ExcludedMessage::class, SMSAnalysisCache::class, AnalysisMetadata::class, Vendor::class, VendorGroup::class, VendorGroupMember::class],
-    version = 5,
+    entities = [Transaction::class, CategoryRule::class, ExcludedMessage::class, SMSAnalysisCache::class, AnalysisMetadata::class, Vendor::class, VendorGroup::class, VendorGroupMember::class, Sender::class],
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -27,6 +28,7 @@ abstract class SMSDatabase : RoomDatabase() {
     abstract fun smsAnalysisCacheDao(): SMSAnalysisCacheDao
     abstract fun vendorDao(): VendorDao
     abstract fun vendorGroupDao(): VendorGroupDao
+    abstract fun senderDao(): SenderDao
 
     companion object {
         const val DATABASE_NAME = "sms_analytics_db"
