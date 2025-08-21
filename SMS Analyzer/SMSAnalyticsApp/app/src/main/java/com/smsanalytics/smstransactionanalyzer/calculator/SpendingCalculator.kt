@@ -19,8 +19,9 @@ class SpendingCalculator {
         }
 
         return transactionsByDate.map { (dateString, dayTransactions) ->
+            // Only include positive amounts for spending (DEBIT transactions should be positive)
             val totalSpent = dayTransactions
-                .filter { it.type == TransactionType.DEBIT }
+                .filter { it.type == TransactionType.DEBIT && it.amount > 0 }
                 .sumOf { it.amount }
 
             DailySummary(
@@ -56,7 +57,7 @@ class SpendingCalculator {
 
     fun calculateTotalSpending(transactions: List<Transaction>): Double {
         return transactions
-            .filter { it.type == TransactionType.DEBIT }
+            .filter { it.type == TransactionType.DEBIT && it.amount > 0 }
             .sumOf { it.amount }
     }
 
@@ -94,7 +95,45 @@ class SpendingCalculator {
 
     fun getSpendingByCategory(transactions: List<Transaction>): Map<String, Double> {
         return transactions
-            .filter { it.type == TransactionType.DEBIT }
+            .filter { it.type == TransactionType.DEBIT && it.amount > 0 }
+            .groupBy { extractCategory(it.description) }
+            .mapValues { (_, categoryTransactions) ->
+                categoryTransactions.sumOf { it.amount }
+            }
+            .toList()
+            .sortedByDescending { it.second }
+            .toMap()
+    }
+
+    fun calculateCreditSummaries(transactions: List<Transaction>): List<DailySummary> {
+        val transactionsByDate = transactions.groupBy { transaction ->
+            dateFormat.format(transaction.date)
+        }
+
+        return transactionsByDate.map { (dateString, dayTransactions) ->
+            val totalCredited = dayTransactions
+                .filter { it.type == TransactionType.CREDIT && it.amount > 0 }
+                .sumOf { it.amount }
+
+            DailySummary(
+                date = dateFormat.parse(dateString) ?: Date(),
+                totalSpent = totalCredited, // Using totalSpent field for credits
+                transactionCount = dayTransactions.filter { it.type == TransactionType.CREDIT }.size,
+                transactions = dayTransactions.filter { it.type == TransactionType.CREDIT }
+            )
+        }.filter { it.totalSpent > 0 }
+        .sortedByDescending { it.date }
+    }
+
+    fun calculateTotalCredits(transactions: List<Transaction>): Double {
+        return transactions
+            .filter { it.type == TransactionType.CREDIT && it.amount > 0 }
+            .sumOf { it.amount }
+    }
+
+    fun getCreditsByCategory(transactions: List<Transaction>): Map<String, Double> {
+        return transactions
+            .filter { it.type == TransactionType.CREDIT && it.amount > 0 }
             .groupBy { extractCategory(it.description) }
             .mapValues { (_, categoryTransactions) ->
                 categoryTransactions.sumOf { it.amount }

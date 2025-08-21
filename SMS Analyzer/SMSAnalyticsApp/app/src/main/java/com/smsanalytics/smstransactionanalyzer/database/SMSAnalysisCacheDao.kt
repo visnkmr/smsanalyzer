@@ -67,6 +67,10 @@ interface SMSAnalysisCacheDao {
     @Query("UPDATE sms_analysis_cache SET isExcluded = 1 WHERE messageId = :messageId")
     suspend fun markMessageAsExcluded(messageId: Long)
 
+    // Mark a message as included (restore from exclusion)
+    @Query("UPDATE sms_analysis_cache SET isExcluded = 0 WHERE messageId = :messageId")
+    suspend fun markMessageAsIncluded(messageId: Long)
+
     // Get last analysis metadata
     @Query("SELECT * FROM analysis_metadata ORDER BY lastAnalysisDate DESC LIMIT 1")
     suspend fun getLastAnalysisMetadata(): AnalysisMetadata?
