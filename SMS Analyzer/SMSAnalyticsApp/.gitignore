@@ -1,0 +1,220 @@
+# Android
+*.apk
+*.ap_
+*.dex
+bin/
+gen/
+.gradle/
+local.properties
+proguard/
+*.log
+.navigation/
+captures/
+.idea/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/dictionaries
+.idea/libraries
+.idea/caches
+.idea/modules.xml
+.idea/misc.xml
+*.iml
+*.ipr
+*.iws
+.idea_modules/
+atlassian-ide-plugin.xml
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Gradle
+.gradle/
+build/
+gradle-app.setting
+!gradle-wrapper.jar
+!gradle-wrapper.properties
+.gradletasknamecache
+
+# User-specific configurations
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/.name
+.idea/compiler.xml
+.idea/copyright/profiles_settings.xml
+.idea/encodings.xml
+.idea/misc.xml
+.idea/modules
+.idea/scopes/scope_settings.xml
+.idea/vcs.xml
+*.iws
+*.iml
+*.ipr
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Java
+*.class
+*.log
+*.ctxt
+.mtj.tmp/
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Virtual machine crash logs
+hs_err_pid*
+
+# Kotlin
+*.kotlin_module
+
+# Android Studio
+.idea/
+*.iml
+.idea_modules/
+atlassian-ide-plugin.xml
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+
+# Android
+*.apk
+*.ap_
+*.dex
+bin/
+gen/
+.gradle/
+local.properties
+proguard/
+*.log
+.navigation/
+captures/
+*.jks
+*.keystore
+!gradle-wrapper.jar
+!gradle-wrapper.properties
+.idea/caches/build_file_checksums.ser
+
+# Kotlin
+*.kotlin_module
+
+# Build outputs
+app/build/
+build/
+
+# Signing files
+*.jks
+*.keystore
+
+# Lint
+lint-results-debug.html
+lint-results-release.html
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Coverage reports
+coverage/
+coverage.ec
+coverage.xml
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# JetBrains IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Node.js (if using React Native or web components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ProGuard
+proguard/
+*.pro
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+fastlane/readme.md
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.staging
+
+# Backup files
+*.bak
+*.backup
+
+# Documentation
+*.md.bak
+
+# Test coverage
+coverage/
+
+# Kotlin
+*.kotlin_module
+.kotlin/

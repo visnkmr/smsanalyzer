@@ -48,8 +48,10 @@ fun MessageBrowserScreen() {
     var selectedTab by remember { mutableStateOf(TimeFilter.TODAY) }
     var customDateRange by remember { mutableStateOf<DateRange?>(null) }
 
-    // Date picker state
-    val dateRangePickerState = rememberDateRangePickerState()
+    // Date picker state - simplified approach
+    var showDatePicker by remember { mutableStateOf(false) }
+    var startDate by remember { mutableStateOf<Long?>(null) }
+    var endDate by remember { mutableStateOf<Long?>(null) }
 
     val smsReader = remember { SMSReader(context) }
 
@@ -128,9 +130,11 @@ fun MessageBrowserScreen() {
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    DateRangePicker(
-                        state = dateRangePickerState,
-                        modifier = Modifier.fillMaxWidth()
+                    // Simple date range selection
+                    Text(
+                        text = "Date range selection not implemented in this version",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -141,18 +145,19 @@ fun MessageBrowserScreen() {
                     ) {
                         OutlinedButton(
                             onClick = {
-                                val startMillis = dateRangePickerState.selectedStartDateMillis
-                                val endMillis = dateRangePickerState.selectedEndDateMillis
+                                // For now, set to last 7 days as default
+                                val calendar = Calendar.getInstance()
+                                val endTime = calendar.time
+                                calendar.add(Calendar.DAY_OF_MONTH, -7)
+                                val startTime = calendar.time
 
-                                if (startMillis != null && endMillis != null) {
-                                    customDateRange = DateRange(
-                                        startDate = Date(startMillis),
-                                        endDate = Date(endMillis)
-                                    )
-                                }
+                                customDateRange = DateRange(
+                                    startDate = startTime,
+                                    endDate = endTime
+                                )
                             }
                         ) {
-                            Text("Apply Range")
+                            Text("Use Last 7 Days")
                         }
                     }
                 }

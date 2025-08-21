@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
     private var monthlySummaries by mutableStateOf<List<MonthlySummary>>(emptyList())
     private var isLoading by mutableStateOf(false)
     private var hasPermission by mutableStateOf(false)
-    private var progress by mutableStateOf(0)
+    private var progressValue by mutableStateOf(0)
     private var progressMessage by mutableStateOf("")
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -95,45 +95,45 @@ class MainActivity : ComponentActivity() {
 
     private fun loadTransactionData() {
         isLoading = true
-        progress = 0
+        progressValue = 0
         progressMessage = "Starting SMS analysis..."
 
         lifecycleScope.launch {
             try {
                 // Step 1: Read SMS with progress
-                transactions = smsReader.readTransactionSMS { progressValue, message ->
-                    progress = progressValue
+                transactions = smsReader.readTransactionSMS { progressVal, message ->
+                    progressValue = progressVal
                     progressMessage = message
                 }
 
                 // Step 2: Calculate daily spending
-                progress = 10
+                progressValue = 10
                 progressMessage = "Calculating daily spending for ${transactions.size} transactions..."
                 kotlinx.coroutines.delay(100)
 
                 dailySummaries = calculator.calculateDailySpending(transactions)
 
-                progress = 15
+                progressValue = 15
                 progressMessage = "Found ${dailySummaries.size} days with transactions"
                 kotlinx.coroutines.delay(100)
 
                 // Step 3: Calculate monthly spending
-                progress = 18
+                progressValue = 18
                 progressMessage = "Calculating monthly spending from ${dailySummaries.size} daily summaries..."
                 kotlinx.coroutines.delay(100)
 
                 monthlySummaries = calculator.calculateMonthlySpending(transactions)
 
-                progress = 25
+                progressValue = 25
                 progressMessage = "Completed analysis: ${dailySummaries.size} days, ${monthlySummaries.size} months"
                 kotlinx.coroutines.delay(100)
 
                 // Step 4: Finalizing
-                progress = 90
+                progressValue = 90
                 progressMessage = "Finalizing analysis..."
                 kotlinx.coroutines.delay(300) // Brief delay for UX
 
-                progress = 100
+                progressValue = 100
                 progressMessage = "Analysis complete! Found ${transactions.size} transactions"
 
             } catch (e: Exception) {
@@ -251,7 +251,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 // Linear progress indicator
                 LinearProgressIndicator(
-                    progress = progress / 100f,
+                    progress = progressValue / 100f,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -259,7 +259,7 @@ class MainActivity : ComponentActivity() {
 
                 // Progress percentage
                 Text(
-                    text = "$progress% Complete",
+                    text = "$progressValue% Complete",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -452,16 +452,16 @@ class MainActivity : ComponentActivity() {
     private fun exportData(format: ExportFormat, compression: CompressionType) {
         lifecycleScope.launch {
             isLoading = true
-            progress = 0
+            progressValue = 0
             progressMessage = "Starting export process..."
 
             try {
-                val result = exportManager.exportTransactions(transactions, format, compression) { progressValue, message ->
-                    progress = progressValue
+                val result = exportManager.exportTransactions(transactions, format, compression) { progressVal, message ->
+                    progressValue = progressVal
                     progressMessage = message
                 }
 
-                progress = 100
+                progressValue = 100
                 progressMessage = "Export completed successfully!"
 
                 // Show success message

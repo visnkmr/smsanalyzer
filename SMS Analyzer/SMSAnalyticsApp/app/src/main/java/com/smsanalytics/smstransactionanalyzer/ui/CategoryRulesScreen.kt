@@ -1,6 +1,7 @@
 package com.smsanalytics.smstransactionanalyzer.ui
 
 import android.widget.Toast
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,7 @@ import com.smsanalytics.smstransactionanalyzer.manager.CategoryRuleManager
 import com.smsanalytics.smstransactionanalyzer.model.*
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryRulesScreen() {
     val navController = rememberNavController()
@@ -47,6 +49,7 @@ fun CategoryRulesScreen() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryRulesListScreen(
     navController: NavController,
@@ -118,6 +121,7 @@ fun CategoryRulesListScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryRuleItem(
     rule: CategoryRule,
@@ -204,6 +208,7 @@ fun CategoryRuleItem(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEditRuleScreen(
     navController: NavController,

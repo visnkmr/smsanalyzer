@@ -1,6 +1,8 @@
 package com.smsanalytics.smstransactionanalyzer.database
 
+import android.content.Context
 import androidx.room.Database
+import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.smsanalytics.smstransactionanalyzer.model.CategoryRule
@@ -18,5 +20,22 @@ abstract class SMSDatabase : RoomDatabase() {
 
     companion object {
         const val DATABASE_NAME = "sms_analytics_db"
+
+        @Volatile
+        private var INSTANCE: SMSDatabase? = null
+
+        fun getInstance(context: Context): SMSDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    SMSDatabase::class.java,
+                    DATABASE_NAME
+                )
+                .fallbackToDestructiveMigration()
+                .build()
+                INSTANCE = instance
+                instance
+            }
+        }
     }
 }

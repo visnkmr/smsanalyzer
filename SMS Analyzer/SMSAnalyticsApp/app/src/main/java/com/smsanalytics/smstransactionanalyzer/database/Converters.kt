@@ -3,6 +3,7 @@ package com.smsanalytics.smstransactionanalyzer.database
 import androidx.room.TypeConverter
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.util.Date
 
 class Converters {
 
@@ -29,5 +30,15 @@ class Converters {
     @TypeConverter
     fun toTransactionType(value: String?): com.smsanalytics.smstransactionanalyzer.model.TransactionType? {
         return value?.let { com.smsanalytics.smstransactionanalyzer.model.TransactionType.valueOf(it) }
+    }
+
+    @TypeConverter
+    fun fromDate(date: Date?): Long? {
+        return date?.time
+    }
+
+    @TypeConverter
+    fun toDate(timestamp: Long?): Date? {
+        return timestamp?.let { Date(it) }
     }
 }
