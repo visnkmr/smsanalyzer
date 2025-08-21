@@ -65,6 +65,8 @@ fun MessageBrowserScreen() {
     var showDatePicker by remember { mutableStateOf(false) }
     var showMonthDropdown by remember { mutableStateOf<String?>(null) }
     var excludedMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
 
     val smsReader = remember { SMSReader(context) }
     val database = remember { SMSDatabase.getInstance(context) }
@@ -101,9 +103,27 @@ fun MessageBrowserScreen() {
         }
     }
 
-    // Filter messages when tab changes
-    LaunchedEffect(selectedTab, customDateRange, allMessages) {
-        filteredMessages = filterMessages(selectedTab, allMessages, customDateRange)
+    // Filter messages when tab changes or search query changes
+    LaunchedEffect(selectedTab, customDateRange, allMessages, searchQuery) {
+        var filtered = filterMessages(selectedTab, allMessages, customDateRange)
+
+        // Apply search filter
+        if (searchQuery.isNotEmpty()) {
+            filtered = filtered.filter { message ->
+                try {
+                    // Try as regex first
+                    val regex = Regex(searchQuery, setOf(RegexOption.IGNORE_CASE))
+                    regex.containsMatchIn(message.body) ||
+                    regex.containsMatchIn(message.sender)
+                } catch (e: Exception) {
+                    // Fall back to simple text search
+                    message.body.contains(searchQuery, ignoreCase = true) ||
+                    message.sender.contains(searchQuery, ignoreCase = true)
+                }
+            }
+        }
+
+        filteredMessages = filtered
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -114,6 +134,47 @@ fun MessageBrowserScreen() {
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(16.dp)
         )
+
+        // Search Bar
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search messages...") },
+                    placeholder = { Text("Enter words or regex") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.DateRange, // You can use a search icon
+                            contentDescription = "Search"
+                        )
+                    }
+                )
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = {
+                        searchQuery = ""
+                        isSearchActive = false
+                    }) {
+                        Text("✕", style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
 
         // Tab row
         TabRow(selectedTabIndex = selectedTab.ordinal) {

@@ -521,6 +521,8 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun TransactionDetailItem(transaction: Transaction) {
+        var showExcludeDialog by remember { mutableStateOf(false) }
+
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -530,30 +532,74 @@ class MainActivity : ComponentActivity() {
             Column(modifier = Modifier.padding(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        transaction.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "₹${String.format("%.2f", transaction.amount)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (transaction.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.primary
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            transaction.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            SimpleDateFormat("HH:mm", Locale.getDefault()).format(transaction.date),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "₹${String.format("%.2f", transaction.amount)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (transaction.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.primary
+                        )
+
+                        TextButton(
+                            onClick = { showExcludeDialog = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                "Exclude",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
-                Text(
-                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(transaction.date),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
+        }
+
+        if (showExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showExcludeDialog = false },
+                title = { Text("Exclude Transaction") },
+                text = {
+                    Text("Are you sure you want to exclude this transaction from analysis? This will prevent it from being counted in future spending calculations.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            // Here we would add logic to exclude the transaction
+                            // For now, just show a toast
+                            Toast.makeText(this@MainActivity, "Transaction exclusion feature coming soon", Toast.LENGTH_SHORT).show()
+                            showExcludeDialog = false
+                        }
+                    ) {
+                        Text("Exclude")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 
