@@ -12,12 +12,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -379,9 +381,9 @@ class MainActivity : ComponentActivity() {
                     Text(getString(R.string.no_transactions))
                 } else {
                     LazyColumn(
-                        modifier = Modifier.height(200.dp)
+                        modifier = Modifier.height(300.dp)
                     ) {
-                        items(dailySummaries.take(7)) { summary ->
+                        items(dailySummaries) { summary ->
                             DailySpendingItem(summary)
                         }
                     }
@@ -409,9 +411,9 @@ class MainActivity : ComponentActivity() {
                     Text(getString(R.string.no_transactions))
                 } else {
                     LazyColumn(
-                        modifier = Modifier.height(200.dp)
+                        modifier = Modifier.height(300.dp)
                     ) {
-                        items(monthlySummaries.take(6)) { summary ->
+                        items(monthlySummaries) { summary ->
                             MonthlySpendingItem(summary)
                         }
                     }
@@ -423,30 +425,166 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun DailySpendingItem(summary: DailySummary) {
         val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
-        Row(
+        var showDetails by remember { mutableStateOf(false) }
+
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
+                .clickable { showDetails = !showDetails }
+                .padding(vertical = 4.dp)
         ) {
-            Text(dateFormat.format(summary.date))
-            Text("₹${String.format("%.2f", summary.totalSpent)}")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    dateFormat.format(summary.date),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "₹${String.format("%.2f", summary.totalSpent)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (showDetails && summary.transactions.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Transactions (${summary.transactions.size}):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                LazyColumn(
+                    modifier = Modifier.height(150.dp)
+                ) {
+                    items(summary.transactions) { transaction ->
+                        TransactionDetailItem(transaction)
+                    }
+                }
+            }
+
+            Divider(modifier = Modifier.padding(top = 8.dp))
         }
-        Divider()
     }
 
     @Composable
     fun MonthlySpendingItem(summary: MonthlySummary) {
-        Row(
+        var showDetails by remember { mutableStateOf(false) }
+
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
+                .clickable { showDetails = !showDetails }
+                .padding(vertical = 4.dp)
         ) {
-            Text(summary.month)
-            Text("₹${String.format("%.2f", summary.totalSpent)}")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    summary.month,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "₹${String.format("%.2f", summary.totalSpent)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (showDetails && summary.dailySummaries.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Daily Breakdown (${summary.dailySummaries.size} days):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                LazyColumn(
+                    modifier = Modifier.height(200.dp)
+                ) {
+                    items(summary.dailySummaries) { dailySummary ->
+                        DailySummaryDetailItem(dailySummary)
+                    }
+                }
+            }
+
+            Divider(modifier = Modifier.padding(top = 8.dp))
         }
-        Divider()
+    }
+
+    @Composable
+    fun TransactionDetailItem(transaction: Transaction) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        transaction.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "₹${String.format("%.2f", transaction.amount)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (transaction.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.primary
+                    )
+                }
+                Text(
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(transaction.date),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun DailySummaryDetailItem(dailySummary: DailySummary) {
+        val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        dateFormat.format(dailySummary.date),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "₹${String.format("%.2f", dailySummary.totalSpent)} (${dailySummary.transactionCount} txns)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
     }
 
     private fun exportData(format: ExportFormat, compression: CompressionType) {

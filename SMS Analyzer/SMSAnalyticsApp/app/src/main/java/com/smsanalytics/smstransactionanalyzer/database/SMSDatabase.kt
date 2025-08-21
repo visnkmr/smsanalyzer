@@ -7,16 +7,18 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.smsanalytics.smstransactionanalyzer.model.CategoryRule
 import com.smsanalytics.smstransactionanalyzer.model.Transaction
+import com.smsanalytics.smstransactionanalyzer.model.ExcludedMessage
 
 @Database(
-    entities = [Transaction::class, CategoryRule::class],
-    version = 2,
+    entities = [Transaction::class, CategoryRule::class, ExcludedMessage::class],
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class SMSDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun categoryRuleDao(): CategoryRuleDao
+    abstract fun excludedMessageDao(): ExcludedMessageDao
 
     companion object {
         const val DATABASE_NAME = "sms_analytics_db"
