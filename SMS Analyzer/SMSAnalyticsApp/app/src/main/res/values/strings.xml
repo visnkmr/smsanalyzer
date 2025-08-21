@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SMS Analytics</string>
+    <string name="daily_spending">Daily Spending</string>
+    <string name="monthly_spending">Monthly Spending</string>
+    <string name="total_spending">Total Spending</string>
+    <string name="export_data">Export Data</string>
+    <string name="export_csv">Export as CSV</string>
+    <string name="export_json">Export as JSON</string>
+    <string name="export_protobuf">Export as Protobuf</string>
+    <string name="export_compressed">Export Compressed</string>
+    <string name="analyzing_sms">Analyzing SMS messages...</string>
+    <string name="no_transactions">No transactions found</string>
+    <string name="permission_required">SMS permission required</string>
+    <string name="grant_permission">Please grant SMS permission to analyze your transactions</string>
+    <string name="export_success">Export successful</string>
+    <string name="export_failed">Export failed</string>
+    <string name="loading">Loading...</string>
+</resources>
