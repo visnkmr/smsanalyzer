@@ -188,6 +188,7 @@ fun QuickAccessCard(navController: NavController) {
             Spacer(modifier = Modifier.height(8.dp))
 
             val quickAccessItems = listOf(
+                Triple("📱 All Messages", "all_messages", "View all SMS messages"),
                 Triple("🏪 Vendor Management", "vendor_management", "Manage and exclude vendors"),
                 Triple("📱 Sender Management", "sender_management", "Manage and exclude senders"),
                 Triple("⚙️ Category Rules", "category_rules", "Manage transaction categorization rules"),

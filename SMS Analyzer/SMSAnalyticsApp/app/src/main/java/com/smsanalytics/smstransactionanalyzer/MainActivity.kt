@@ -47,6 +47,7 @@ import com.smsanalytics.smstransactionanalyzer.ui.screens.VendorManagementScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.VendorGroupManagementScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.GroupSpendingOverviewScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.RuleTestingScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.MessageDetailScreen
 import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
 import com.smsanalytics.smstransactionanalyzer.util.VendorExtractor
 import com.smsanalytics.smstransactionanalyzer.util.SenderExtractor
@@ -669,6 +670,22 @@ class MainActivity : ComponentActivity() {
                     database = database,
                     transactions = transactions
                 )
+            }
+            composable("all_messages") {
+                MessageBrowserScreen(
+                    navController = navController,
+                    filterMode = com.smsanalytics.smstransactionanalyzer.ui.SMSFilterMode.ALL_MESSAGES
+                )
+            }
+            composable("message_detail/{messageId}") { backStackEntry ->
+                val messageId = backStackEntry.arguments?.getString("messageId")?.toLongOrNull()
+                if (messageId != null) {
+                    MessageDetailScreen(
+                        navController = navController,
+                        messageId = messageId,
+                        smsReader = smsReader
+                    )
+                }
             }
         }
     }

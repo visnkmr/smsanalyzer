@@ -139,7 +139,8 @@ fun UnifiedMessageItem(
     isSelected: Boolean = false,
     isSelectMode: Boolean = false,
     onSelectionChanged: ((Boolean) -> Unit)? = null,
-    isTransactionSMS: Boolean = false
+    isTransactionSMS: Boolean = false,
+    onMessageClick: ((Long) -> Unit)? = null
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.getDefault()) }
 
@@ -150,6 +151,8 @@ fun UnifiedMessageItem(
             .clickable {
                 if (isSelectMode && onSelectionChanged != null) {
                     onSelectionChanged(!isSelected)
+                } else if (onMessageClick != null) {
+                    onMessageClick(message.id)
                 }
             },
         border = BorderStroke(
@@ -486,48 +489,8 @@ fun MessageBrowserScreen(
                 try {
                     isLoading = true
 
-                    // Load cache data first (on background thread)
-                    try {
-                        isLoadingFromCache = true
-                        val cachedMessages = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            database.smsAnalysisCacheDao().getCachedTransactions()
-                        }
-
-                        if (cachedMessages.isNotEmpty()) {
-                            // Convert cached transactions to SMSMessage format
-                            val cachedSmsMessages = cachedMessages.map { cache ->
-                                SMSReader.SMSMessage(
-                                    id = cache.messageId,
-                                    body = cache.messageBody,
-                                    sender = cache.sender,
-                                    timestamp = cache.timestamp,
-                                    type = 1 // Default to inbox
-                                )
-                            }
-
-                            // Update UI state
-                            allMessages = cachedSmsMessages
-                            loadedMessageCount = cachedSmsMessages.size
-                            totalMessageCount = cachedSmsMessages.size
-                            monthSummaries = createMonthSummaries(cachedSmsMessages)
-
-                            // Show cached data immediately
-                            isLoadingFromCache = false
-                            Log.d("MessageBrowserScreen", "Loaded ${cachedSmsMessages.size} messages from cache")
-                        } else {
-                            isLoadingFromCache = false
-                            Log.d("MessageBrowserScreen", "No cached data available")
-                        }
-                    } catch (e: Exception) {
-                        Log.w("MessageBrowserScreen", "Cache loading failed", e)
-                        isLoadingFromCache = false
-                    }
-
-                    // Set initial loading to false after cache load
-                    isLoading = false
-
-                    // Load fresh SMS data in background only if needed
-                    if (allMessages.isEmpty()) {
+                    // For ALL_MESSAGES mode, load all SMS from the system
+                    if (currentFilterMode == SMSFilterMode.ALL_MESSAGES) {
                         scope.launch {
                             try {
                                 isLoadingMore = true
@@ -536,32 +499,101 @@ fun MessageBrowserScreen(
                                 }
 
                                 if (allSmsMessages.isNotEmpty()) {
-                                    Log.d("MessageBrowserScreen", "Loaded ${allSmsMessages.size} fresh SMS messages")
+                                    Log.d("MessageBrowserScreen", "Loaded ${allSmsMessages.size} ALL SMS messages")
 
-                                    // Update with fresh SMS data
+                                    // Update with all SMS data
                                     allMessages = allSmsMessages
                                     loadedMessageCount = allSmsMessages.size
                                     totalMessageCount = allSmsMessages.size
                                     monthSummaries = createMonthSummaries(allSmsMessages)
                                     hasFreshData = true
-
-                                    // Update cache in background
-                                    scope.launch {
-                                        try {
-                                            withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                                updateCacheWithFreshSMS(allSmsMessages)
-                                            }
-                                            Log.d("MessageBrowserScreen", "Cache updated with fresh SMS data")
-                                        } catch (e: Exception) {
-                                            Log.w("MessageBrowserScreen", "Cache update failed", e)
-                                        }
-                                    }
                                 }
                             } catch (e: Exception) {
-                                Log.e("MessageBrowserScreen", "Error loading fresh SMS messages", e)
+                                Log.e("MessageBrowserScreen", "Error loading all SMS messages", e)
                             } finally {
                                 isLoadingMore = false
-                                Log.d("MessageBrowserScreen", "Fresh data loading completed")
+                                isLoading = false
+                                Log.d("MessageBrowserScreen", "All SMS data loading completed")
+                            }
+                        }
+                    } else {
+                        // For other modes, load from cache first (transaction-focused)
+                        try {
+                            isLoadingFromCache = true
+                            val cachedMessages = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                database.smsAnalysisCacheDao().getCachedTransactions()
+                            }
+
+                            if (cachedMessages.isNotEmpty()) {
+                                // Convert cached transactions to SMSMessage format
+                                val cachedSmsMessages = cachedMessages.map { cache ->
+                                    SMSReader.SMSMessage(
+                                        id = cache.messageId,
+                                        body = cache.messageBody,
+                                        sender = cache.sender,
+                                        timestamp = cache.timestamp,
+                                        type = 1 // Default to inbox
+                                    )
+                                }
+
+                                // Update UI state
+                                allMessages = cachedSmsMessages
+                                loadedMessageCount = cachedSmsMessages.size
+                                totalMessageCount = cachedSmsMessages.size
+                                monthSummaries = createMonthSummaries(cachedSmsMessages)
+
+                                // Show cached data immediately
+                                isLoadingFromCache = false
+                                Log.d("MessageBrowserScreen", "Loaded ${cachedSmsMessages.size} messages from cache")
+                            } else {
+                                isLoadingFromCache = false
+                                Log.d("MessageBrowserScreen", "No cached data available")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("MessageBrowserScreen", "Cache loading failed", e)
+                            isLoadingFromCache = false
+                        }
+
+                        // Set initial loading to false after cache load
+                        isLoading = false
+
+                        // Load fresh SMS data in background only if needed
+                        if (allMessages.isEmpty()) {
+                            scope.launch {
+                                try {
+                                    isLoadingMore = true
+                                    val allSmsMessages = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        smsReader.readAllSMS()
+                                    }
+
+                                    if (allSmsMessages.isNotEmpty()) {
+                                        Log.d("MessageBrowserScreen", "Loaded ${allSmsMessages.size} fresh SMS messages")
+
+                                        // Update with fresh SMS data
+                                        allMessages = allSmsMessages
+                                        loadedMessageCount = allSmsMessages.size
+                                        totalMessageCount = allSmsMessages.size
+                                        monthSummaries = createMonthSummaries(allSmsMessages)
+                                        hasFreshData = true
+
+                                        // Update cache in background
+                                        scope.launch {
+                                            try {
+                                                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                    updateCacheWithFreshSMS(allSmsMessages)
+                                                }
+                                                Log.d("MessageBrowserScreen", "Cache updated with fresh SMS data")
+                                            } catch (e: Exception) {
+                                                Log.w("MessageBrowserScreen", "Cache update failed", e)
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("MessageBrowserScreen", "Error loading fresh SMS messages", e)
+                                } finally {
+                                    isLoadingMore = false
+                                    Log.d("MessageBrowserScreen", "Fresh data loading completed")
+                                }
                             }
                         }
                     }
@@ -605,6 +637,9 @@ fun MessageBrowserScreen(
 
                     // Apply specific filter mode if provided
                     when (currentFilterMode) {
+                        SMSFilterMode.ALL_MESSAGES -> {
+                            // No additional filtering for ALL_MESSAGES - show all messages
+                        }
                         SMSFilterMode.SENDER_SPECIFIC -> {
                             if (currentFilterValue != null) {
                                 result = result.filter { it.sender == currentFilterValue }
@@ -626,7 +661,7 @@ fun MessageBrowserScreen(
                             }
                         }
                         else -> {
-                            // No additional filtering for ALL_MESSAGES or other modes
+                            // No additional filtering for other modes
                         }
                     }
 
@@ -1487,7 +1522,10 @@ fun MessageBrowserScreen(
                                                     selectedMessages - message.id
                                                 }
                                             },
-                                            isTransactionSMS = parser.isTransactionSMS(message.body)
+                                            isTransactionSMS = parser.isTransactionSMS(message.body),
+                                            onMessageClick = { messageId ->
+                                                navController.navigate("message_detail/$messageId")
+                                            }
                                         )
                                     }
                                 }
