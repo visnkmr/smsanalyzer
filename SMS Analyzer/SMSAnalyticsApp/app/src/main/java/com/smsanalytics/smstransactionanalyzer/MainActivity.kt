@@ -427,6 +427,9 @@ class MainActivity : ComponentActivity() {
             composable("settings") {
                 SettingsScreen(navController)
             }
+            composable("data_inspection") {
+                DataInspectionScreen(navController)
+            }
         }
     }
 
@@ -3446,9 +3449,275 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private suspend fun loadAppDataForInspection(): Map<String, Any> {
+        val data = mutableMapOf<String, Any>()
+
+        // Basic transaction data
+        data["Total Transactions"] = (transactions as List<*>).size
+        data["Total Spending"] = calculator.calculateTotalSpending(transactions)
+        data["Daily Average"] = calculator.getAverageDailySpending(transactions)
+        data["Monthly Average"] = calculator.getAverageMonthlySpending(transactions)
+
+        // Summary data
+        data["Daily Summaries Count"] = (dailySummaries as List<*>).size
+        data["Monthly Summaries Count"] = (monthlySummaries as List<*>).size
+        data["Yearly Summaries Count"] = (yearlySummaries as List<*>).size
+
+        // Database statistics
+        val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+        data["Cached Transactions"] = (cachedTransactions as List<*>).size
+
+        val excludedMessages = database.excludedMessageDao().getAllExcludedMessages()
+        data["Excluded Messages"] = (excludedMessages as List<*>).size
+
+        val vendors = database.vendorDao().getAllVendors()
+        data["Vendors"] = (vendors as List<*>).size
+
+        val senders = database.senderDao().getAllSenders()
+        data["Senders"] = (senders as List<*>).size
+
+        val vendorGroups = database.vendorGroupDao().getAllVendorGroups()
+        data["Vendor Groups"] = (vendorGroups as List<*>).size
+
+        // Spending by type
+        val debitTransactions = transactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT }
+        val creditTransactions = transactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT }
+
+        data["Debit Transactions"] = debitTransactions.size
+        data["Credit Transactions"] = creditTransactions.size
+        data["Total Debit Amount"] = debitTransactions.sumOf { it.amount }
+        data["Total Credit Amount"] = creditTransactions.sumOf { it.amount }
+
+        // Date range
+        val earliestTransaction = transactions.minByOrNull { it.date }
+        val latestTransaction = transactions.maxByOrNull { it.date }
+
+        data["Date Range"] = if (earliestTransaction != null && latestTransaction != null) {
+            "${SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(earliestTransaction.date)} - ${SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(latestTransaction.date)}"
+        } else {
+            "No transactions"
+        }
+
+        // Top spending categories (by month)
+        val topMonthlySpending = monthlySummaries.sortedByDescending { it.totalSpent }.take(5)
+        data["Top 5 Months by Spending"] = topMonthlySpending.map {
+            "${it.month}: ₹${String.format("%.2f", it.totalSpent)}"
+        }
+
+        // Top spending days
+        val topDailySpending = dailySummaries.sortedByDescending { it.totalSpent }.take(5)
+        data["Top 5 Days by Spending"] = topDailySpending.map {
+            "${SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(it.date)}: ₹${String.format("%.2f", it.totalSpent)}"
+        }
+
+        return data
+    }
+
+    @Composable
+    fun DataInspectionScreen(navController: androidx.navigation.NavController) {
+        var appData by remember { mutableStateOf<Map<String, Any>>(emptyMap()) }
+        var isLoading by remember { mutableStateOf(true) }
+
+        // Load comprehensive app data
+        LaunchedEffect(Unit) {
+            try {
+                appData = loadAppDataForInspection()
+                isLoading = false
+
+            } catch (e: Exception) {
+                Log.e("DataInspectionScreen", "Error loading data", e)
+                isLoading = false
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Data Inspection",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = { navController.navigate("settings") }) {
+                    Text("←")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                Text(
+                    text = "Loading app data...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 16.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Overview section
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "📊 Data Overview",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Total Transactions: ${appData["Total Transactions"]}")
+                                Text("Total Spending: ₹${String.format("%.2f", appData["Total Spending"] as? Double ?: 0.0)}")
+                                Text("Date Range: ${appData["Date Range"]}")
+                            }
+                        }
+                    }
+
+                    // Transaction statistics
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "💰 Transaction Statistics",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Debit Transactions: ${appData["Debit Transactions"]} (₹${String.format("%.2f", appData["Total Debit Amount"] as? Double ?: 0.0)})")
+                                Text("Credit Transactions: ${appData["Credit Transactions"]} (₹${String.format("%.2f", appData["Total Credit Amount"] as? Double ?: 0.0)})")
+                                Text("Daily Average: ₹${String.format("%.2f", appData["Daily Average"] as? Double ?: 0.0)}")
+                                Text("Monthly Average: ₹${String.format("%.2f", appData["Monthly Average"] as? Double ?: 0.0)}")
+                            }
+                        }
+                    }
+
+                    // Database statistics
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "🗄️ Database Statistics",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Cached Transactions: ${appData["Cached Transactions"]}")
+                                Text("Excluded Messages: ${appData["Excluded Messages"]}")
+                                Text("Vendors: ${appData["Vendors"]}")
+                                Text("Senders: ${appData["Senders"]}")
+                                Text("Vendor Groups: ${appData["Vendor Groups"]}")
+                            }
+                        }
+                    }
+
+                    // Summary statistics
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "📈 Summary Statistics",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Daily Summaries: ${appData["Daily Summaries Count"]}")
+                                Text("Monthly Summaries: ${appData["Monthly Summaries Count"]}")
+                                Text("Yearly Summaries: ${appData["Yearly Summaries Count"]}")
+                            }
+                        }
+                    }
+
+                    // Top spending periods
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "🏆 Top Spending Periods",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Top 5 Days:",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                (appData["Top 5 Days by Spending"] as? List<String>)?.forEach { day ->
+                                    Text("• $day", style = MaterialTheme.typography.bodySmall)
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "Top 5 Months:",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                (appData["Top 5 Months by Spending"] as? List<String>)?.forEach { month ->
+                                    Text("• $month", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+
+                    // Raw data export option
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "📤 Export Options",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Button(
+                                    onClick = {
+                                        // Export comprehensive data
+                                        exportData(ExportFormat.JSON, CompressionType.NONE)
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Export All Data (JSON)")
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Button(
+                                    onClick = {
+                                        // Export statistics only
+                                        exportData(ExportFormat.CSV, CompressionType.NONE)
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Export Statistics (CSV)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Composable
     fun SettingsScreen(navController: androidx.navigation.NavController) {
         var selectedHomeScreen by remember { mutableStateOf(getPreferredHomeScreen()) }
+        var showAppMap by remember { mutableStateOf(false) }
 
         Column(
             modifier = Modifier
@@ -3471,6 +3740,116 @@ class MainActivity : ComponentActivity() {
             }
 
             Spacer(modifier = Modifier.height(32.dp))
+
+            // App Map Section
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "App Navigation",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Explore all screens and features in the app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { showAppMap = !showAppMap },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (showAppMap) "Hide App Map" else "Show App Map")
+                        }
+
+                        Button(
+                            onClick = { navController.navigate("data_inspection") },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Data Inspection")
+                        }
+                    }
+
+                    if (showAppMap) {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        val appPages = listOf(
+                            Triple("📊 Dashboard", "dashboard", "Main spending overview with yearly, monthly, and daily summaries"),
+                            Triple("💬 Message Browser", "message_browser", "Browse and filter all SMS messages"),
+                            Triple("🚫 Excluded Messages", "excluded_messages", "View and manage excluded transactions"),
+                            Triple("💰 Credit Summaries", "credit_summaries", "View all credit transactions and summaries"),
+                            Triple("⚙️ Category Rules", "category_rules", "Manage transaction categorization rules"),
+                            Triple("🏪 Vendor Management", "vendor_management", "Manage and exclude vendors"),
+                            Triple("📱 Sender Management", "sender_management", "Manage and exclude senders"),
+                            Triple("👥 Vendor Groups", "vendor_group_management", "Create and manage vendor groups"),
+                            Triple("📊 Group Spending", "group_spending_overview", "View spending by vendor groups"),
+                            Triple("📤 Transaction SMS View", "transaction_sms_view", "View all transaction-related SMS"),
+                            Triple("🔍 Data Inspection", "data_inspection", "Inspect all app data and statistics")
+                        )
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "📍 App Map - All Available Pages",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                LazyColumn(
+                                    modifier = Modifier.height(300.dp)
+                                ) {
+                                    items(appPages) { page ->
+                                        val (displayName, route, description) = page
+                                        Card(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 2.dp)
+                                                .clickable {
+                                                    navController.navigate(route)
+                                                },
+                                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                Text(
+                                                    text = displayName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Text(
+                                                    text = description,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Home Screen Selection
             Card(
@@ -3521,7 +3900,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Info section
             Card(
