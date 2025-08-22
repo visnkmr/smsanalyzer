@@ -46,8 +46,9 @@ class SMSReader(private val context: Context) {
             Telephony.Sms.DATE
         )
 
-        // Complex message filtering with 8 different LIKE patterns for transaction detection
+        // Transaction-focused message filtering (no explicit OTP patterns)
         val selection = "${Telephony.Sms.BODY} LIKE ? OR " +
+                        "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
@@ -56,8 +57,8 @@ class SMSReader(private val context: Context) {
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ?"
         val selectionArgs = arrayOf(
-            "%OTP%", "%otp%", "%verification code%", "%transaction%",
-            "%payment%", "%debit%", "%credit%", "%amount%"
+            "%transaction%", "%payment%", "%debit%",
+            "%credit%", "%amount%", "%rs%", "%₹%", "%inr%", "%debited%"
         )
 
         try {
@@ -198,18 +199,16 @@ class SMSReader(private val context: Context) {
             Telephony.Sms.DATE
         )
 
-        // Query for messages newer than the sinceTimestamp with complex message filtering
+        // Query for messages newer than the sinceTimestamp with transaction-focused filtering
         val selection = "(${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ? OR " +
                         "${Telephony.Sms.BODY} LIKE ?) AND ${Telephony.Sms.DATE} > ?"
         val selectionArgs = arrayOf(
-            "%OTP%", "%otp%", "%verification code%", "%transaction%",
-            "%payment%", "%debit%", "%credit%", "%amount%", sinceTimestamp.toString()
+            "%transaction%", "%payment%", "%debit%",
+            "%credit%", "%amount%", "%verification code%", sinceTimestamp.toString()
         )
 
         try {

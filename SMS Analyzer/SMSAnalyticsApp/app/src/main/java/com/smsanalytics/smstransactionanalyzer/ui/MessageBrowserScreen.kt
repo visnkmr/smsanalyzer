@@ -405,31 +405,21 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
         }
     }
 
-    // Load messages from cache instead of reprocessing SMS
+    // Load ALL messages from SMS database (not just cached transactions)
     LaunchedEffect(Unit) {
         if (smsReader.hasSMSPermission()) {
             scope.launch {
                 try {
-                    // Load from cache only - don't reprocess SMS
-                    val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
-                    val lastAnalysis = database.smsAnalysisCacheDao().getLastAnalysisMetadata()
+                    isLoading = true
 
-                    if (cachedTransactions.isNotEmpty()) {
-                        // Convert cached transactions to SMSMessage format
-                        val cachedMessages = cachedTransactions.map { cache ->
-                            SMSReader.SMSMessage(
-                                id = cache.messageId,
-                                body = cache.messageBody,
-                                sender = cache.sender,
-                                timestamp = cache.timestamp,
-                                type = 1 // Default to inbox
-                            )
-                        }
+                    // Load ALL messages from SMS database using readAllSMS
+                    val allSmsMessages = smsReader.readAllSMS()
 
-                        allMessages = cachedMessages
-                        loadedMessageCount = cachedMessages.size
-                        totalMessageCount = cachedMessages.size
-                        monthSummaries = createMonthSummaries(cachedMessages)
+                    if (allSmsMessages.isNotEmpty()) {
+                        allMessages = allSmsMessages
+                        loadedMessageCount = allSmsMessages.size
+                        totalMessageCount = allSmsMessages.size
+                        monthSummaries = createMonthSummaries(allSmsMessages)
 
                         // Apply current filters
                         var filtered = filterMessages(selectedTab, allMessages, customDateRange)
@@ -443,14 +433,15 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
                         isLoading = false
                         return@launch
                     } else {
-                        // No cached data available
-                        Toast.makeText(context, "No SMS data available. Run SMS analysis first.", Toast.LENGTH_LONG).show()
+                        // No messages available
+                        Toast.makeText(context, "No SMS messages found on device.", Toast.LENGTH_LONG).show()
                         isLoading = false
                         return@launch
                     }
 
                 } catch (e: Exception) {
                     Toast.makeText(context, "Error loading messages: ${e.message}", Toast.LENGTH_SHORT).show()
+                    isLoading = false
                 } finally {
                     isLoading = false
                     isLoadingMore = false
@@ -1322,8 +1313,25 @@ fun MessageItem(
                         color = if (isExcluded) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                     )
 
-                    // Transaction badge
+                    // Transaction badge with amount
                     if (hasTransaction && transactionAmount.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "₹$transactionAmount",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Transaction indicator (without amount)
+                    if (hasTransaction && transactionAmount.isEmpty()) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             color = MaterialTheme.colorScheme.secondary,
@@ -1331,10 +1339,9 @@ fun MessageItem(
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = "₹$transactionAmount",
+                                text = "Transaction",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondary,
-                                fontWeight = FontWeight.Bold
+                                color = MaterialTheme.colorScheme.onSecondary
                             )
                         }
                     }
@@ -1350,7 +1357,8 @@ fun MessageItem(
                             Text(
                                 text = "EXCLUDED",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onError
+                                color = MaterialTheme.colorScheme.onError,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -1394,13 +1402,45 @@ fun MessageItem(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(
-                        onClick = { onExcludeToggle(!isExcluded) }
-                    ) {
-                        Text(
-                            text = if (isExcluded) "Include" else "Exclude",
-                            color = if (isExcluded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        )
+                    // Include button (only show when excluded)
+                    if (isExcluded) {
+                        TextButton(
+                            onClick = { onExcludeToggle(false) }
+                        ) {
+                            Text(
+                                text = "Include",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    // Exclude button (only show when not excluded)
+                    if (!isExcluded) {
+                        TextButton(
+                            onClick = { onExcludeToggle(true) }
+                        ) {
+                            Text(
+                                text = "Exclude",
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    // Transaction-specific actions
+                    if (hasTransaction) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                // Could add more transaction-specific actions here
+                                // For now, just show it's a transaction
+                            }
+                        ) {
+                            Text(
+                                text = "💰",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
                     }
                 }
             }
