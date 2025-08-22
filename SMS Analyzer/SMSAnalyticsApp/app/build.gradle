@@ -26,8 +26,9 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            minifyEnabled true
-            shrinkResources true
+            // Disable minify for debug builds to improve build speed
+            minifyEnabled false
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
@@ -35,18 +36,46 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+        // Enable incremental compilation
+        incremental true
     }
 
     kotlinOptions {
         jvmTarget = '17'
+        // Enable incremental compilation for Kotlin
+        incremental true
+        // Optimize for build performance
+        freeCompilerArgs += [
+            '-Xjvm-default=all',
+            '-opt-in=kotlin.RequiresOptIn'
+        ]
     }
 
     buildFeatures {
         compose true
+        buildConfig false // Disable build config to reduce build time
     }
 
     composeOptions {
         kotlinCompilerExtensionVersion '1.4.3'
+    }
+
+    // Optimize build performance
+    dexingArtifactTransform {
+        // Enable dexing artifact transform for better incremental builds
+    }
+
+    packagingOptions {
+        // Exclude unnecessary files to reduce APK size
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1}'
+            excludes += 'META-INF/DEPENDENCIES'
+            excludes += 'META-INF/NOTICE*'
+            excludes += 'META-INF/LICENSE*'
+            excludes += 'META-INF/*.SF'
+            excludes += 'META-INF/*.DSA'
+            excludes += 'META-INF/*.RSA'
+        }
     }
 }
 

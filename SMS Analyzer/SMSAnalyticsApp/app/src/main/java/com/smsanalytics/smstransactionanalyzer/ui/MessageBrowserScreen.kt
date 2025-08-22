@@ -370,7 +370,11 @@ private fun shouldUseCachedData(lastAnalysis: com.smsanalytics.smstransactionana
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
+fun MessageBrowserScreen(
+    navController: androidx.navigation.NavController,
+    filterMode: SMSFilterMode = SMSFilterMode.ALL_MESSAGES,
+    filterValue: String? = null
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -389,6 +393,10 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
     var showBulkExcludeDialog by remember { mutableStateOf(false) }
     var loadedMessageCount by remember { mutableStateOf(0) }
     var totalMessageCount by remember { mutableStateOf(0) }
+
+    // Filter parameters from navigation
+    var currentFilterMode by remember { mutableStateOf(filterMode) }
+    var currentFilterValue by remember { mutableStateOf(filterValue) }
 
     val smsReader = remember { SMSReader(context) }
     val database = remember { SMSDatabase.getInstance(context) }
@@ -453,9 +461,36 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
         }
     }
 
-    // Filter messages when tab changes or search query changes
-    LaunchedEffect(selectedTab, customDateRange, allMessages, searchQuery) {
+    // Filter messages when tab changes, search query changes, or filter parameters change
+    LaunchedEffect(selectedTab, customDateRange, allMessages, searchQuery, currentFilterMode, currentFilterValue) {
         var filtered = filterMessages(selectedTab, allMessages, customDateRange)
+
+        // Apply specific filter mode if provided
+        when (currentFilterMode) {
+            SMSFilterMode.SENDER_SPECIFIC -> {
+                if (currentFilterValue != null) {
+                    filtered = filtered.filter { it.sender == currentFilterValue }
+                }
+            }
+            SMSFilterMode.VENDOR_SPECIFIC -> {
+                if (currentFilterValue != null) {
+                    filtered = filtered.filter { it.sender == currentFilterValue }
+                }
+            }
+            SMSFilterMode.TRANSACTION_ONLY -> {
+                filtered = filtered.filter { message ->
+                    message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE)))
+                }
+            }
+            SMSFilterMode.NON_TRANSACTION_ONLY -> {
+                filtered = filtered.filter { message ->
+                    !message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE)))
+                }
+            }
+            else -> {
+                // No additional filtering for ALL_MESSAGES or other modes
+            }
+        }
 
         // Apply search filter
         if (searchQuery.isNotEmpty()) {
@@ -477,11 +512,21 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Message Browser",
+                text = if (currentFilterValue != null) getModeTitle(currentFilterMode) else "Message Browser",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Clear filter button (only show if there's an active filter)
+                if (currentFilterValue != null) {
+                    IconButton(onClick = {
+                        currentFilterMode = SMSFilterMode.ALL_MESSAGES
+                        currentFilterValue = null
+                    }) {
+                        Text("✕", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+
                 // Navigation to spending dashboard
                 IconButton(onClick = {
                     navController.navigate("dashboard") {
@@ -490,12 +535,24 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
                 }) {
                     Text("📊", style = MaterialTheme.typography.titleMedium)
                 }
+
                 if (filteredMessages.isNotEmpty()) {
                     IconButton(onClick = { showBulkExcludeDialog = true }) {
                         Text("🚫", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
+        }
+
+        // Show filter value as subtitle if provided
+        currentFilterValue?.let { filterValue ->
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = filterValue,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
 
         // Search Bar

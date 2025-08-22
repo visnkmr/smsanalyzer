@@ -322,7 +322,17 @@ class MainActivity : ComponentActivity() {
                     progressValue = 80
                     progressMessage = "Calculating yearly spending from ${monthlySummaries.size} monthly summaries..."
 
+                    Log.d("MainActivity", "Monthly summaries count: ${monthlySummaries.size}")
+                    if (monthlySummaries.isNotEmpty()) {
+                        Log.d("MainActivity", "Sample monthly summary: ${monthlySummaries.first().month} - ₹${monthlySummaries.first().totalSpent}")
+                    }
+
                     yearlySummaries = calculateYearlySpending(monthlySummaries)
+
+                    Log.d("MainActivity", "Yearly summaries count: ${yearlySummaries.size}")
+                    if (yearlySummaries.isNotEmpty()) {
+                        Log.d("MainActivity", "Sample yearly summary: ${yearlySummaries.first().year} - ₹${yearlySummaries.first().totalSpent}")
+                    }
 
                     progressValue = 90
                     progressMessage = "Data processing complete!"
@@ -463,18 +473,37 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun calculateYearlySpending(monthlySummaries: List<MonthlySummary>): List<YearlySummary> {
-        return monthlySummaries.groupBy { summary ->
+        Log.d("calculateYearlySpending", "Input monthly summaries count: ${monthlySummaries.size}")
+
+        if (monthlySummaries.isEmpty()) {
+            Log.d("calculateYearlySpending", "No monthly summaries to process")
+            return emptyList()
+        }
+
+        val result = monthlySummaries.groupBy { summary ->
             // Extract year from month string (e.g., "December 2023" -> "2023")
             val year = summary.month.split(" ").last()
+            Log.d("calculateYearlySpending", "Processing month: ${summary.month}, extracted year: $year, amount: ${summary.totalSpent}")
             year
         }.map { (year, months) ->
+            val yearlyTotal = months.sumOf { it.totalSpent }
+            val yearlyTransactionCount = months.sumOf { it.dailySummaries.sumOf { daily -> daily.transactionCount } }
+            Log.d("calculateYearlySpending", "Year: $year, months count: ${months.size}, total spent: $yearlyTotal, transaction count: $yearlyTransactionCount")
+
             YearlySummary(
                 year = year,
-                totalSpent = months.sumOf { it.totalSpent },
+                totalSpent = yearlyTotal,
                 monthlySummaries = months,
-                transactionCount = months.sumOf { it.dailySummaries.sumOf { daily -> daily.transactionCount } }
+                transactionCount = yearlyTransactionCount
             )
         }.sortedByDescending { it.year }
+
+        Log.d("calculateYearlySpending", "Final yearly summaries count: ${result.size}")
+        result.forEach { yearly ->
+            Log.d("calculateYearlySpending", "Year: ${yearly.year}, Total: ₹${yearly.totalSpent}, Transactions: ${yearly.transactionCount}")
+        }
+
+        return result
     }
 
     private suspend fun updateCacheWithTransactions(transactions: List<Transaction>) {
@@ -516,7 +545,10 @@ class MainActivity : ComponentActivity() {
                 MessageBrowserScreen(navController)
             }
             composable("vendor_management") {
-                MessageBrowserScreen(navController)
+                MessageBrowserScreen(
+                    navController = navController,
+                    filterMode = com.smsanalytics.smstransactionanalyzer.ui.SMSFilterMode.TRANSACTION_ONLY
+                )
             }
             composable("sender_management") {
                 MessageBrowserScreen(navController)
@@ -524,30 +556,41 @@ class MainActivity : ComponentActivity() {
             composable("vendor_sms_detail/{vendorName}") { backStackEntry ->
                 val vendorName = backStackEntry.arguments?.getString("vendorName") ?: ""
                 Log.d("Navigation", "Vendor SMS detail - vendorName: $vendorName")
-                MessageBrowserScreen(navController)
+                MessageBrowserScreen(
+                    navController = navController,
+                    filterMode = com.smsanalytics.smstransactionanalyzer.ui.SMSFilterMode.VENDOR_SPECIFIC,
+                    filterValue = vendorName
+                )
             }
             composable("sender_sms_detail/{senderName}") { backStackEntry ->
                 val senderName = backStackEntry.arguments?.getString("senderName") ?: ""
                 Log.d("Navigation", "Sender SMS detail - senderName: $senderName")
-                MessageBrowserScreen(navController)
+                MessageBrowserScreen(
+                    navController = navController,
+                    filterMode = com.smsanalytics.smstransactionanalyzer.ui.SMSFilterMode.SENDER_SPECIFIC,
+                    filterValue = senderName
+                )
             }
             composable("transaction_sms_view") {
-                MessageBrowserScreen(navController)
+                MessageBrowserScreen(
+                    navController = navController,
+                    filterMode = com.smsanalytics.smstransactionanalyzer.ui.SMSFilterMode.TRANSACTION_ONLY
+                )
             }
             composable("sms_by_year/{year}") { backStackEntry ->
                 val year = backStackEntry.arguments?.getString("year") ?: ""
-                MessageBrowserScreen(navController)
+                SMSByYearScreen(navController, year)
             }
             composable("sms_by_month/{year}/{month}") { backStackEntry ->
                 val year = backStackEntry.arguments?.getString("year") ?: ""
                 val month = backStackEntry.arguments?.getString("month") ?: ""
-                MessageBrowserScreen(navController)
+                SMSByMonthScreen(navController, year, month)
             }
             composable("sms_by_date/{year}/{month}/{day}") { backStackEntry ->
                 val year = backStackEntry.arguments?.getString("year") ?: ""
                 val month = backStackEntry.arguments?.getString("month") ?: ""
                 val day = backStackEntry.arguments?.getString("day") ?: ""
-                MessageBrowserScreen(navController)
+                SMSByDateScreen(navController, year, month, day)
             }
             composable("vendor_group_management") {
                 VendorGroupManagementScreen()
@@ -569,129 +612,145 @@ class MainActivity : ComponentActivity() {
         val scrollState = rememberScrollState()
         val context = LocalContext.current
 
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
-                .verticalScroll(scrollState)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = getString(R.string.app_name),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Sync button - only show when there are changes
-                    if (hasUnsavedChanges) {
-                        IconButton(
-                            onClick = { syncChanges() },
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text("🔄", style = MaterialTheme.typography.titleMedium)
+            // Header section
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = getString(R.string.app_name),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Sync button - only show when there are changes
+                        if (hasUnsavedChanges) {
+                            IconButton(
+                                onClick = { syncChanges() },
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Text("🔄", style = MaterialTheme.typography.titleMedium)
+                            }
                         }
-                    }
 
-                    // Navigation dropdown menu
-                    var expanded by remember { mutableStateOf(false) }
-                    IconButton(onClick = { expanded = true }) {
-                        Text("☰", style = MaterialTheme.typography.titleMedium)
-                    }
+                        // Navigation dropdown menu
+                        var expanded by remember { mutableStateOf(false) }
+                        IconButton(onClick = { expanded = true }) {
+                            Text("☰", style = MaterialTheme.typography.titleMedium)
+                        }
 
-                    DropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("🚫 Excluded Messages") },
-                            onClick = {
-                                navController.navigate("excluded_messages")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("💰 Credit Summaries") },
-                            onClick = {
-                                navController.navigate("credit_summaries")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("💬 Message Browser") },
-                            onClick = {
-                                navController.navigate("message_browser")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("⚙️ Category Rules") },
-                            onClick = {
-                                navController.navigate("category_rules")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("🏪 Vendor Management") },
-                            onClick = {
-                                navController.navigate("vendor_management")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("📱 Transaction SMS View") },
-                            onClick = {
-                                navController.navigate("transaction_sms_view")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("👥 Vendor Groups") },
-                            onClick = {
-                                navController.navigate("vendor_group_management")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("📊 Group Spending") },
-                            onClick = {
-                                navController.navigate("group_spending_overview")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("📤 Sender Management") },
-                            onClick = {
-                                navController.navigate("sender_management")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("⚙️ Settings") },
-                            onClick = {
-                                navController.navigate("settings")
-                                expanded = false
-                            }
-                        )
+                        DropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("🚫 Excluded Messages") },
+                                onClick = {
+                                    navController.navigate("excluded_messages")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("💰 Credit Summaries") },
+                                onClick = {
+                                    navController.navigate("credit_summaries")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("💬 Message Browser") },
+                                onClick = {
+                                    navController.navigate("message_browser")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("⚙️ Category Rules") },
+                                onClick = {
+                                    navController.navigate("category_rules")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("🏪 Vendor Management") },
+                                onClick = {
+                                    navController.navigate("vendor_management")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("📱 Transaction SMS View") },
+                                onClick = {
+                                    navController.navigate("transaction_sms_view")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("👥 Vendor Groups") },
+                                onClick = {
+                                    navController.navigate("vendor_group_management")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("📊 Group Spending") },
+                                onClick = {
+                                    navController.navigate("group_spending_overview")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("📤 Sender Management") },
+                                onClick = {
+                                    navController.navigate("sender_management")
+                                    expanded = false
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("⚙️ Settings") },
+                                onClick = {
+                                    navController.navigate("settings")
+                                    expanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
+            // Main content sections
             if (!hasPermission) {
-                PermissionRequestCard()
+                item {
+                    PermissionRequestCard()
+                }
             } else if (isLoading) {
-                LoadingCard()
+                item {
+                    LoadingCard()
+                }
             } else {
-                SpendingOverviewCard()
-                ExportOptionsCard()
-                YearlySpendingList()
-                MonthlySpendingList()
-                DailySpendingList()
+                item {
+                    SpendingOverviewCard()
+                }
+                item {
+                    ExportOptionsCard()
+                }
+                item {
+                    YearlySpendingList()
+                }
+                item {
+                    MonthlySpendingList()
+                }
+                item {
+                    DailySpendingList()
+                }
             }
         }
     }
@@ -1083,7 +1142,6 @@ class MainActivity : ComponentActivity() {
     fun DailySpendingItem(summary: DailySummary) {
         val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
         var showDetails by remember { mutableStateOf(false) }
-        val navController = androidx.navigation.compose.rememberNavController()
 
         Column(
             modifier = Modifier
@@ -1128,23 +1186,7 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Add navigation to message browser for this specific day
-                Button(
-                    onClick = {
-                        val dayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(summary.date)
-                        val format = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
-                        val message = "Opening messages for ${format.format(summary.date)}"
-                        Toast.makeText(
-                            this@MainActivity,
-                            message,
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        // Note: For full implementation, you'd need to pass the date filter to MessageBrowserScreen
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("📬 View All Messages for ${dateFormat.format(summary.date)}")
-                }
+                // Note: Navigation functionality has been moved to the detailed view
             }
 
             val dividerTopPadding = if (showDetails) 16.dp else 8.dp
@@ -1223,21 +1265,7 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Add navigation to message browser for this month
-                Button(
-                    onClick = {
-                        val message = "Opening messages for ${summary.month}"
-                        Toast.makeText(
-                            this@MainActivity,
-                            message,
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        // Note: For full implementation, you'd need to pass the month filter to MessageBrowserScreen
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("📬 View All Messages for ${summary.month}")
-                }
+                // Note: Navigation functionality has been moved to the detailed view
             }
 
             val dividerTopPadding2 = if (showDetails) 16.dp else 8.dp
@@ -1253,7 +1281,7 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable {
-                    showDetails = !showDetails
+                    // navController.navigate("sms_by_year/${summary.year}")
                 }
                 .padding(vertical = 4.dp)
         ) {
@@ -1316,22 +1344,7 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Add navigation to message browser for this year
-                Button(
-                    onClick = {
-                        // Navigate to message browser with year filter
-                        // For now, we'll use the existing navigation pattern
-                        val message = "Opening message browser for ${summary.year}"
-                        Toast.makeText(
-                            this@MainActivity,
-                            message,
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("📬 View All Messages for " + summary.year)
-                }
+                // Note: Navigation functionality has been moved to the detailed view
             }
 
             Divider(modifier = Modifier.padding(top = 8.dp))
@@ -2315,6 +2328,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+        
             }
         }
     }
@@ -2383,6 +2397,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+        
             }
         }
 
@@ -4144,7 +4159,15 @@ class MainActivity : ComponentActivity() {
         var showAppMap by remember { mutableStateOf(false) }
         var showFilteringSettings by remember { mutableStateOf(false) }
 
-        Column(
+        // Filter patterns state - now just enabled/disabled state
+        var enabledPatterns by remember {
+            mutableStateOf(setOf(
+                "%transaction%", "%payment%", "%debit%", "%credit%", "%amount%",
+                "%rs%", "%₹%", "%inr%", "%debited%"
+            ))
+        }
+
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp)
@@ -4361,8 +4384,23 @@ class MainActivity : ComponentActivity() {
                     if (showFilteringSettings) {
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Current filter patterns
-                        val currentPatterns = listOf(
+                        Text(
+                            text = "Filter Pattern Settings:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "Enable or disable patterns used to identify financial SMS messages:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        val allPatterns = listOf(
                             "%transaction%" to "Transaction keywords",
                             "%payment%" to "Payment keywords",
                             "%debit%" to "Debit notifications",
@@ -4374,37 +4412,66 @@ class MainActivity : ComponentActivity() {
                             "%debited%" to "Debited transactions"
                         )
 
-                        Text(
-                            text = "Current Filter Patterns:",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
                         LazyColumn(
-                            modifier = Modifier.height(200.dp)
+                            modifier = Modifier.height(250.dp)
                         ) {
-                            items(currentPatterns) { (pattern, description) ->
+                            items(allPatterns) { (pattern, description) ->
+                                val isEnabled = pattern in enabledPatterns
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 2.dp),
+                                        .padding(vertical = 2.dp)
+                                        .clickable {
+                                            if (isEnabled) {
+                                                enabledPatterns = enabledPatterns - pattern
+                                            } else {
+                                                enabledPatterns = enabledPatterns + pattern
+                                            }
+                                        },
                                     colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                        containerColor = if (isEnabled)
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        else
+                                            MaterialTheme.colorScheme.surfaceVariant
                                     )
                                 ) {
-                                    Column(modifier = Modifier.padding(8.dp)) {
-                                        Text(
-                                            text = pattern.removeSurrounding("%"),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Text(
-                                            text = description,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = pattern.removeSurrounding("%"),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium,
+                                                color = if (isEnabled)
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                else
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                text = description,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = if (isEnabled)
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                else
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        Checkbox(
+                                            checked = isEnabled,
+                                            onCheckedChange = { checked ->
+                                                if (checked) {
+                                                    enabledPatterns = enabledPatterns + pattern
+                                                } else {
+                                                    enabledPatterns = enabledPatterns - pattern
+                                                }
+                                            }
                                         )
                                     }
                                 }
@@ -4413,26 +4480,28 @@ class MainActivity : ComponentActivity() {
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        Text(
-                            text = "💡 Tip: These patterns help identify financial SMS messages. You can modify them in the source code if needed.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
                         Button(
                             onClick = {
+                                val enabledCount = enabledPatterns.size
+                                val totalCount = allPatterns.size
                                 Toast.makeText(
                                     this@MainActivity,
-                                    "Filter patterns can be customized in SMSReader.kt",
+                                    "$enabledCount of $totalCount patterns enabled. Changes will apply on next SMS analysis.",
                                     Toast.LENGTH_LONG
                                 ).show()
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("How to Customize Filters")
+                            Text("💾 Save Pattern Settings")
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "💡 Tip: Enable patterns that match the keywords and symbols in your bank's SMS messages. This helps the app identify financial transactions accurately.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -4492,6 +4561,455 @@ class MainActivity : ComponentActivity() {
                 kotlinx.coroutines.delay(300) // Brief pause for UX
                 isLoading = false
             }
+        }
+    }
+
+    @Composable
+    fun SMSByYearScreen(navController: androidx.navigation.NavController, year: String) {
+        var filteredMessages by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache>>(emptyList()) }
+        var isLoading by remember { mutableStateOf(true) }
+        var searchQuery by remember { mutableStateOf("") }
+        var showAdvancedFilters by remember { mutableStateOf(false) }
+
+        // Load messages for the specific year
+        LaunchedEffect(year) {
+            try {
+                val allCachedMessages = database.smsAnalysisCacheDao().getCachedTransactions()
+                filteredMessages = allCachedMessages.filter { message ->
+                    val messageDate = Date(message.timestamp)
+                    val calendar = Calendar.getInstance().apply { time = messageDate }
+                    calendar.get(Calendar.YEAR).toString() == year && message.hasTransaction &&
+                    (message.isExcluded ?: false) == false
+                }
+                isLoading = false
+            } catch (e: Exception) {
+                Log.e("SMSByYearScreen", "Error loading messages", e)
+                isLoading = false
+            }
+        }
+
+        // Apply search filter
+        val displayedMessages = remember(searchQuery, filteredMessages) {
+            if (searchQuery.isBlank()) {
+                filteredMessages
+            } else {
+                filteredMessages.filter { message ->
+                    message.messageBody.contains(searchQuery, ignoreCase = true) ||
+                    (message.sender?.contains(searchQuery, ignoreCase = true) == true)
+                }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SMS Messages - $year",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAdvancedFilters = !showAdvancedFilters }) {
+                        Text(if (showAdvancedFilters) "🔼" else "🔽", style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(onClick = { navController.navigate("dashboard") }) {
+                        Text("←")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Search and filters
+            if (showAdvancedFilters) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search messages") },
+                    placeholder = { Text("Search in message content or sender") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Text("🔍") }
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Results summary
+            Text(
+                text = "Showing ${displayedMessages.size} messages from $year",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else if (displayedMessages.isEmpty()) {
+                Text(
+                    text = if (searchQuery.isBlank()) "No SMS messages found for $year" else "No messages match your search",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(displayedMessages) { message ->
+                        SMSMessageItem(message)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun SMSByMonthScreen(navController: androidx.navigation.NavController, year: String, month: String) {
+        var filteredMessages by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache>>(emptyList()) }
+        var isLoading by remember { mutableStateOf(true) }
+        var searchQuery by remember { mutableStateOf("") }
+        var showAdvancedFilters by remember { mutableStateOf(false) }
+
+        // Load messages for the specific month
+        LaunchedEffect(year, month) {
+            try {
+                val allCachedMessages = database.smsAnalysisCacheDao().getCachedTransactions()
+                val monthInt = month.toIntOrNull() ?: 1
+
+                filteredMessages = allCachedMessages.filter { message ->
+                    val messageDate = Date(message.timestamp)
+                    val calendar = Calendar.getInstance().apply { time = messageDate }
+                    calendar.get(Calendar.YEAR).toString() == year &&
+                    (calendar.get(Calendar.MONTH) + 1) == monthInt && // Calendar.MONTH is 0-based
+                    message.hasTransaction &&
+                    (message.isExcluded ?: false) == false
+                }
+                isLoading = false
+            } catch (e: Exception) {
+                Log.e("SMSByMonthScreen", "Error loading messages", e)
+                isLoading = false
+            }
+        }
+
+        // Apply search filter
+        val displayedMessages = remember(searchQuery, filteredMessages) {
+            if (searchQuery.isBlank()) {
+                filteredMessages
+            } else {
+                filteredMessages.filter { message ->
+                    message.messageBody.contains(searchQuery, ignoreCase = true) ||
+                    (message.sender?.contains(searchQuery, ignoreCase = true) == true)
+                }
+            }
+        }
+
+        // Convert month number to month name
+        val monthNames = listOf("January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December")
+        val monthName = month.toIntOrNull()?.let { monthNames.getOrNull(it - 1) } ?: month
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SMS Messages - $monthName $year",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAdvancedFilters = !showAdvancedFilters }) {
+                        Text(if (showAdvancedFilters) "🔼" else "🔽", style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(onClick = { navController.navigate("dashboard") }) {
+                        Text("←")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Search and filters
+            if (showAdvancedFilters) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search messages") },
+                    placeholder = { Text("Search in message content or sender") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Text("🔍") }
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Results summary
+            Text(
+                text = "Showing ${displayedMessages.size} messages from $monthName $year",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else if (displayedMessages.isEmpty()) {
+                Text(
+                    text = if (searchQuery.isBlank()) "No SMS messages found for $monthName $year" else "No messages match your search",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(displayedMessages) { message ->
+                        SMSMessageItem(message)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun SMSByDateScreen(navController: androidx.navigation.NavController, year: String, month: String, day: String) {
+        var filteredMessages by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache>>(emptyList()) }
+        var isLoading by remember { mutableStateOf(true) }
+        var searchQuery by remember { mutableStateOf("") }
+        var showAdvancedFilters by remember { mutableStateOf(false) }
+
+        // Load messages for the specific date
+        LaunchedEffect(year, month, day) {
+            try {
+                val allCachedMessages = database.smsAnalysisCacheDao().getCachedTransactions()
+                val monthInt = month.toIntOrNull() ?: 1
+                val dayInt = day.toIntOrNull() ?: 1
+
+                filteredMessages = allCachedMessages.filter { message ->
+                    val messageDate = Date(message.timestamp)
+                    val calendar = Calendar.getInstance().apply { time = messageDate }
+                    calendar.get(Calendar.YEAR).toString() == year &&
+                    (calendar.get(Calendar.MONTH) + 1) == monthInt && // Calendar.MONTH is 0-based
+                    calendar.get(Calendar.DAY_OF_MONTH) == dayInt &&
+                    message.hasTransaction &&
+                    (message.isExcluded ?: false) == false
+                }
+                isLoading = false
+            } catch (e: Exception) {
+                Log.e("SMSByDateScreen", "Error loading messages", e)
+                isLoading = false
+            }
+        }
+
+        // Apply search filter
+        val displayedMessages = remember(searchQuery, filteredMessages) {
+            if (searchQuery.isBlank()) {
+                filteredMessages
+            } else {
+                filteredMessages.filter { message ->
+                    message.messageBody.contains(searchQuery, ignoreCase = true) ||
+                    (message.sender?.contains(searchQuery, ignoreCase = true) == true)
+                }
+            }
+        }
+
+        // Convert month number to month name
+        val monthNames = listOf("January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December")
+        val monthName = month.toIntOrNull()?.let { monthNames.getOrNull(it - 1) } ?: month
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SMS Messages - $day $monthName $year",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showAdvancedFilters = !showAdvancedFilters }) {
+                        Text(if (showAdvancedFilters) "🔼" else "🔽", style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(onClick = { navController.navigate("dashboard") }) {
+                        Text("←")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Search and filters
+            if (showAdvancedFilters) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search messages") },
+                    placeholder = { Text("Search in message content or sender") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Text("🔍") }
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Results summary
+            Text(
+                text = "Showing ${displayedMessages.size} messages from $day $monthName $year",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+            } else if (displayedMessages.isEmpty()) {
+                Text(
+                    text = if (searchQuery.isBlank()) "No SMS messages found for $day $monthName $year" else "No messages match your search",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(displayedMessages) { message ->
+                        SMSMessageItem(message)
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun SMSMessageItem(message: com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache) {
+        var showExcludeDialog by remember { mutableStateOf(false) }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        // Amount badge
+                        Surface(
+                            color = if (message.transactionType == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
+                                MaterialTheme.colorScheme.errorContainer
+                            else
+                                MaterialTheme.colorScheme.primaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            Text(
+                                text = "₹${String.format("%.2f", message.transactionAmount ?: 0.0)}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (message.transactionType == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT)
+                                    MaterialTheme.colorScheme.onErrorContainer
+                                else
+                                    MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Text(
+                            text = message.messageBody,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "From: ${message.sender ?: "Unknown"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Text(
+                                text = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(message.timestamp)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // Exclude button
+                TextButton(
+                    onClick = { showExcludeDialog = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(
+                        "Exclude",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+
+        if (showExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showExcludeDialog = false },
+                title = { Text("Exclude SMS Message") },
+                text = {
+                    Text("Are you sure you want to exclude this SMS message from analysis? This will prevent it from being counted in future spending calculations.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            excludeMessage(message)
+                            showExcludeDialog = false
+                        }
+                    ) {
+                        Text("Exclude")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
