@@ -405,19 +405,17 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
         }
     }
 
-    // Load messages with cache-first approach
+    // Load messages from cache instead of reprocessing SMS
     LaunchedEffect(Unit) {
         if (smsReader.hasSMSPermission()) {
             scope.launch {
                 try {
-                    // First, try to load from cache
+                    // Load from cache only - don't reprocess SMS
                     val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
                     val lastAnalysis = database.smsAnalysisCacheDao().getLastAnalysisMetadata()
 
-                    val shouldUseCache = shouldUseCachedData(lastAnalysis, cachedTransactions)
-
-                    if (shouldUseCache && cachedTransactions.isNotEmpty()) {
-                        // Use cached data - convert to SMSMessage format
+                    if (cachedTransactions.isNotEmpty()) {
+                        // Convert cached transactions to SMSMessage format
                         val cachedMessages = cachedTransactions.map { cache ->
                             SMSReader.SMSMessage(
                                 id = cache.messageId,
@@ -444,53 +442,12 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
 
                         isLoading = false
                         return@launch
-                    }
-
-                    // If no valid cache, load progressively from SMS
-                    // Start with an empty list and load progressively
-                    allMessages = emptyList()
-                    filteredMessages = emptyList()
-                    loadedMessageCount = 0
-
-                    // Get total count first (this is fast)
-                    totalMessageCount = getTotalMessageCount(context)
-                    if (totalMessageCount == 0) {
+                    } else {
+                        // No cached data available
+                        Toast.makeText(context, "No SMS data available. Run SMS analysis first.", Toast.LENGTH_LONG).show()
                         isLoading = false
                         return@launch
                     }
-
-                    // Load messages in batches
-                    val batchSize = 50
-                    var offset = 0
-                    val loadedMessages = mutableListOf<SMSReader.SMSMessage>()
-
-                    while (offset < totalMessageCount) {
-                        isLoadingMore = offset > 0 // Show "loading more" for subsequent batches
-
-                        val batch = loadMessageBatch(context, offset, batchSize)
-                        if (batch.isEmpty()) break
-
-                        loadedMessages.addAll(batch)
-                        allMessages = loadedMessages.toList()
-
-                        // Update filtered messages with current batch
-                        var filtered = filterMessages(selectedTab, allMessages, customDateRange)
-                        if (searchQuery.isNotEmpty()) {
-                            filtered = filtered.filter { message ->
-                                performSmartSearch(message, searchQuery)
-                            }
-                        }
-                        filteredMessages = filtered.sortedByDescending { it.timestamp }
-
-                        loadedMessageCount = loadedMessages.size
-                        offset += batchSize
-
-                        // Small delay to show the loading progress
-                        kotlinx.coroutines.delay(100)
-                    }
-
-                    // Create month summaries after all messages are loaded
-                    monthSummaries = createMonthSummaries(allMessages)
 
                 } catch (e: Exception) {
                     Toast.makeText(context, "Error loading messages: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -789,13 +746,31 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
                         val database = remember { SMSDatabase.getInstance(context) }
                         val parser = remember { SMSParser() }
                     
-                        // Load all messages on launch
+                        // Load messages from cache instead of reprocessing SMS
                         LaunchedEffect(Unit) {
                             if (smsReader.hasSMSPermission()) {
                                 scope.launch {
                                     try {
-                                        allMessages = smsReader.readAllSMS()
-                                        isLoading = false
+                                        // Load from cache only - don't reprocess SMS
+                                        val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+
+                                        if (cachedTransactions.isNotEmpty()) {
+                                            // Convert cached transactions to SMSMessage format
+                                            allMessages = cachedTransactions.map { cache ->
+                                                SMSReader.SMSMessage(
+                                                    id = cache.messageId,
+                                                    body = cache.messageBody,
+                                                    sender = cache.sender,
+                                                    timestamp = cache.timestamp,
+                                                    type = 1 // Default to inbox
+                                                )
+                                            }
+                                            isLoading = false
+                                        } else {
+                                            // No cached data available
+                                            Toast.makeText(context, "No SMS data available. Run SMS analysis first.", Toast.LENGTH_LONG).show()
+                                            isLoading = false
+                                        }
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "Error loading messages: ${e.message}", Toast.LENGTH_SHORT).show()
                                         isLoading = false

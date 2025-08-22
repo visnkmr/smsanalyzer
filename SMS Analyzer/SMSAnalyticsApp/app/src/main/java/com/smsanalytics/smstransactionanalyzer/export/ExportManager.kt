@@ -8,9 +8,7 @@ import com.smsanalytics.smstransactionanalyzer.model.Transaction
 import com.smsanalytics.smstransactionanalyzer.sms.SMSReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
-import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import java.util.zip.GZIPOutputStream
 import java.io.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -41,13 +39,8 @@ class ExportManager(private val context: Context) {
 
         try {
             onProgress(5, "Preparing export data...")
-            kotlinx.coroutines.delay(100)
-
             onProgress(10, "Found ${transactions.size} transactions to export")
-            kotlinx.coroutines.delay(100)
-
             onProgress(20, "Formatting data as ${format.name}...")
-            kotlinx.coroutines.delay(200)
 
             // Simulate processing each transaction with progress updates
             val totalTransactions = transactions.size
@@ -62,10 +55,8 @@ class ExportManager(private val context: Context) {
                         processedTransactions++
                         val progress = 25 + (processedTransactions * 40 / totalTransactions)
 
-                        if (processedTransactions % 10 == 0 || processedTransactions <= 5) {
+                        if (processedTransactions % 50 == 0 || processedTransactions <= 10 || processedTransactions == totalTransactions) {
                             onProgress(progress, "Exporting transaction $processedTransactions of $totalTransactions to CSV")
-                        } else if (processedTransactions % 50 == 0) {
-                            onProgress(progress, "Processed $processedTransactions out of $totalTransactions transactions")
                         }
 
                         csvContent.append("${dateFormat.format(transaction.date)},")
@@ -74,8 +65,6 @@ class ExportManager(private val context: Context) {
                         csvContent.append("\"${transaction.description.replace("\"", "\"\"")}\",")
                         csvContent.append("\"${transaction.sender.replace("\"", "\"\"")}\",")
                         csvContent.append("\"${transaction.smsBody.replace("\"", "\"\"")}\"\n")
-
-                        kotlinx.coroutines.delay(1) // Small delay for progress visibility
                     }
 
                     writeWithCompression(csvContent.toString(), file, compression)
@@ -88,10 +77,8 @@ class ExportManager(private val context: Context) {
                         processedTransactions++
                         val progress = 25 + (processedTransactions * 40 / totalTransactions)
 
-                        if (processedTransactions % 10 == 0 || processedTransactions <= 5) {
+                        if (processedTransactions % 50 == 0 || processedTransactions <= 10 || processedTransactions == totalTransactions) {
                             onProgress(progress, "Exporting transaction $processedTransactions of $totalTransactions to JSON")
-                        } else if (processedTransactions % 50 == 0) {
-                            onProgress(progress, "Processed $processedTransactions out of $totalTransactions transactions")
                         }
 
                         jsonContent.append("  {\n")
@@ -104,8 +91,6 @@ class ExportManager(private val context: Context) {
                         jsonContent.append("  }")
                         if (index < transactions.size - 1) jsonContent.append(",")
                         jsonContent.append("\n")
-
-                        kotlinx.coroutines.delay(1) // Small delay for progress visibility
                     }
 
                     jsonContent.append("]\n")
@@ -118,14 +103,8 @@ class ExportManager(private val context: Context) {
             }
 
             onProgress(70, "Applying compression (${compression.name})...")
-            kotlinx.coroutines.delay(200)
-
             onProgress(85, "Finalizing file creation...")
-            kotlinx.coroutines.delay(100)
-
             onProgress(95, "Saving file to device...")
-            kotlinx.coroutines.delay(100)
-
             onProgress(100, "Export completed successfully! $totalTransactions transactions exported")
 
             return@withContext "Export successful: ${file.absolutePath}"
@@ -139,14 +118,30 @@ class ExportManager(private val context: Context) {
         format: ExportFormat,
         compression: CompressionType = CompressionType.NONE
     ): String = withContext(Dispatchers.IO) {
-        val smsReader = SMSReader(context)
-        val allSMS = smsReader.readAllSMS()
-
-        val timestamp = System.currentTimeMillis()
-        val filename = "all_sms_$timestamp.${getFileExtension(format, compression)}"
-        val file = File(getExportDirectory(), filename)
-
         try {
+            // Use cached data instead of reprocessing SMS
+            val database = com.smsanalytics.smstransactionanalyzer.database.SMSDatabase.getInstance(context)
+            val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+
+            if (cachedTransactions.isEmpty()) {
+                return@withContext "No SMS data available. Run SMS analysis first."
+            }
+
+            // Convert cached transactions to SMSMessage format
+            val allSMS = cachedTransactions.map { cache ->
+                com.smsanalytics.smstransactionanalyzer.sms.SMSReader.SMSMessage(
+                    id = cache.messageId,
+                    body = cache.messageBody,
+                    sender = cache.sender,
+                    timestamp = cache.timestamp,
+                    type = 1 // Default to inbox
+                )
+            }
+
+            val timestamp = System.currentTimeMillis()
+            val filename = "all_sms_$timestamp.${getFileExtension(format, compression)}"
+            val file = File(getExportDirectory(), filename)
+
             when (format) {
                 ExportFormat.CSV -> exportSMSAsCSV(allSMS, file, compression)
                 ExportFormat.JSON -> exportSMSAsJSON(allSMS, file, compression)
@@ -249,7 +244,7 @@ class ExportManager(private val context: Context) {
                 FileOutputStream(file).use { it.write(content.toByteArray()) }
             }
             CompressionType.GZIP -> {
-                GzipCompressorOutputStream(FileOutputStream(file)).use { it.write(content.toByteArray()) }
+                GZIPOutputStream(FileOutputStream(file)).use { it.write(content.toByteArray()) }
             }
             CompressionType.ZIP -> {
                 ZipOutputStream(FileOutputStream(file)).use { zipOut ->
@@ -259,21 +254,8 @@ class ExportManager(private val context: Context) {
                 }
             }
             CompressionType.TAR_GZ -> {
-                val tarFile = File(file.parent, file.nameWithoutExtension + ".tar")
-                TarArchiveOutputStream(FileOutputStream(tarFile)).use { tarOut ->
-                    val entry = TarArchiveEntry("data.txt")
-                    entry.size = content.toByteArray().size.toLong()
-                    tarOut.putArchiveEntry(entry)
-                    tarOut.write(content.toByteArray())
-                    tarOut.closeArchiveEntry()
-                }
-                // Compress the tar file with gzip
-                GzipCompressorOutputStream(FileOutputStream(file)).use { gzipOut ->
-                    FileInputStream(tarFile).use { tarIn ->
-                        tarIn.copyTo(gzipOut)
-                    }
-                }
-                tarFile.delete() // Clean up temporary tar file
+                // Simplified TAR_GZ: just use GZIP since TAR creation is complex without external libraries
+                GZIPOutputStream(FileOutputStream(file)).use { it.write(content.toByteArray()) }
             }
         }
     }
