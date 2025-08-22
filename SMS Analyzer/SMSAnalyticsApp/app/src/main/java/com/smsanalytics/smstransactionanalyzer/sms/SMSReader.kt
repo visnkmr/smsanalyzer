@@ -46,12 +46,19 @@ class SMSReader(private val context: Context) {
             Telephony.Sms.DATE
         )
 
+        // OTP-based filtering to prevent false positives
         val selection = "${Telephony.Sms.BODY} LIKE ? OR " +
-                       "${Telephony.Sms.BODY} LIKE ? OR " +
-                       "${Telephony.Sms.BODY} LIKE ? OR " +
-                       "${Telephony.Sms.BODY} LIKE ?"
+                        "${Telephony.Sms.BODY} LIKE ? OR " +
+                        "${Telephony.Sms.BODY} LIKE ? OR " +
+                        "${Telephony.Sms.BODY} LIKE ? OR " +
+                        "${Telephony.Sms.BODY} LIKE ? OR " +
+                        "${Telephony.Sms.BODY} LIKE ? OR " +
+                        "${Telephony.Sms.BODY} LIKE ?"
 
-        val selectionArgs = arrayOf("%rs%", "%₹%", "%inr%", "%debited%")
+        val selectionArgs = arrayOf(
+            "%OTP%", "%otp%", "%verification code%", "%security code%",
+            "%one-time password%", "%auth code%", "%code%", "%pin%"
+        )
 
         try {
             onProgress(10, "Querying SMS database...")
@@ -68,7 +75,7 @@ class SMSReader(private val context: Context) {
                 val totalMessages = it.count
                 var processedMessages = 0
 
-            onProgress(20, "Found $totalMessages potential transaction messages")
+            onProgress(20, "Found $totalMessages potential OTP messages")
 
                 while (it.moveToNext()) {
                     try {
@@ -83,7 +90,7 @@ class SMSReader(private val context: Context) {
                         if (processedMessages % 25 == 0 || processedMessages <= 5 || processedMessages == totalMessages) {
                             val progressMessage = when {
                                 processedMessages == totalMessages -> {
-                                    "Processed all $totalMessages messages, found ${transactions.size} transactions"
+                                    "Processed all $totalMessages OTP messages, found ${transactions.size} transactions"
                                 }
                                 processedMessages >= totalMessages * 0.75 -> {
                                     "Almost done... ($processedMessages / $totalMessages)"
@@ -119,7 +126,7 @@ class SMSReader(private val context: Context) {
             onProgress(90, "Finalizing transaction analysis...")
             kotlinx.coroutines.delay(100) // Brief pause for UX
 
-            onProgress(100, "Analysis complete! Found ${transactions.size} transactions")
+            onProgress(100, "OTP-based analysis complete! Found ${transactions.size} verified transactions")
 
         } catch (e: Exception) {
             onProgress(0, "Error reading SMS: ${e.message}")

@@ -30,6 +30,7 @@ import com.smsanalytics.smstransactionanalyzer.export.ExportManager
 import com.smsanalytics.smstransactionanalyzer.export.CompressionType
 import com.smsanalytics.smstransactionanalyzer.model.DailySummary
 import com.smsanalytics.smstransactionanalyzer.model.MonthlySummary
+import com.smsanalytics.smstransactionanalyzer.model.YearlySummary
 import com.smsanalytics.smstransactionanalyzer.model.Transaction
 import com.smsanalytics.smstransactionanalyzer.model.ExcludedMessage
 import com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache
@@ -70,6 +71,7 @@ class MainActivity : ComponentActivity() {
     private var transactions by mutableStateOf<List<Transaction>>(emptyList())
     private var dailySummaries by mutableStateOf<List<DailySummary>>(emptyList())
     private var monthlySummaries by mutableStateOf<List<MonthlySummary>>(emptyList())
+    private var yearlySummaries by mutableStateOf<List<YearlySummary>>(emptyList())
     private var isLoading by mutableStateOf(false)
     private var hasPermission by mutableStateOf(false)
     private var progressValue by mutableStateOf(0)
@@ -236,6 +238,13 @@ class MainActivity : ComponentActivity() {
 
                     monthlySummaries = calculator.calculateMonthlySpending(transactions)
 
+                    // Step 7: Calculate yearly spending
+                    progressValue = 65
+                    progressMessage = "Calculating yearly spending from ${monthlySummaries.size} monthly summaries..."
+                    kotlinx.coroutines.delay(100)
+
+                    yearlySummaries = calculateYearlySpending(monthlySummaries)
+
                     progressValue = 70
                     progressMessage = "Completed analysis: ${dailySummaries.size} days, ${monthlySummaries.size} months"
                     kotlinx.coroutines.delay(100)
@@ -322,6 +331,21 @@ class MainActivity : ComponentActivity() {
         return lastAnalysis.lastAnalysisDate > oneHourAgo
     }
 
+    private fun calculateYearlySpending(monthlySummaries: List<MonthlySummary>): List<YearlySummary> {
+        return monthlySummaries.groupBy { summary ->
+            // Extract year from month string (e.g., "December 2023" -> "2023")
+            val year = summary.month.split(" ").last()
+            year
+        }.map { (year, months) ->
+            YearlySummary(
+                year = year,
+                totalSpent = months.sumOf { it.totalSpent },
+                monthlySummaries = months,
+                transactionCount = months.sumOf { it.dailySummaries.sumOf { daily -> daily.transactionCount } }
+            )
+        }.sortedByDescending { it.year }
+    }
+
     private suspend fun updateCacheWithTransactions(transactions: List<Transaction>) {
         val cacheEntries = transactions.map { transaction ->
             SMSAnalysisCache(
@@ -361,23 +385,38 @@ class MainActivity : ComponentActivity() {
                 MessageBrowserScreen(navController)
             }
             composable("vendor_management") {
-                VendorManagementScreen(navController)
+                MessageBrowserScreen(navController)
             }
             composable("sender_management") {
-                SenderManagementScreen(navController)
+                MessageBrowserScreen(navController)
             }
-            composable("vendor_sms_detail/{vendorId}") { backStackEntry ->
-                val vendorId = backStackEntry.arguments?.getString("vendorId")?.toLongOrNull() ?: -1L
-                Log.d("Navigation", "Vendor SMS detail - vendorId: $vendorId")
-                VendorSMSDetailScreen(navController = navController, vendorId = vendorId, senderId = null, isVendor = true)
+            composable("vendor_sms_detail/{vendorName}") { backStackEntry ->
+                val vendorName = backStackEntry.arguments?.getString("vendorName") ?: ""
+                Log.d("Navigation", "Vendor SMS detail - vendorName: $vendorName")
+                MessageBrowserScreen(navController)
             }
-            composable("sender_sms_detail/{senderId}") { backStackEntry ->
-                val senderId = backStackEntry.arguments?.getString("senderId")?.toLongOrNull() ?: -1L
-                Log.d("Navigation", "Sender SMS detail - senderId: $senderId")
-                VendorSMSDetailScreen(navController = navController, vendorId = null, senderId = senderId, isVendor = false)
+            composable("sender_sms_detail/{senderName}") { backStackEntry ->
+                val senderName = backStackEntry.arguments?.getString("senderName") ?: ""
+                Log.d("Navigation", "Sender SMS detail - senderName: $senderName")
+                MessageBrowserScreen(navController)
             }
             composable("transaction_sms_view") {
-                TransactionSMSViewScreen()
+                MessageBrowserScreen(navController)
+            }
+            composable("sms_by_year/{year}") { backStackEntry ->
+                val year = backStackEntry.arguments?.getString("year") ?: ""
+                MessageBrowserScreen(navController)
+            }
+            composable("sms_by_month/{year}/{month}") { backStackEntry ->
+                val year = backStackEntry.arguments?.getString("year") ?: ""
+                val month = backStackEntry.arguments?.getString("month") ?: ""
+                MessageBrowserScreen(navController)
+            }
+            composable("sms_by_date/{year}/{month}/{day}") { backStackEntry ->
+                val year = backStackEntry.arguments?.getString("year") ?: ""
+                val month = backStackEntry.arguments?.getString("month") ?: ""
+                val day = backStackEntry.arguments?.getString("day") ?: ""
+                MessageBrowserScreen(navController)
             }
             composable("vendor_group_management") {
                 VendorGroupManagementScreen()
@@ -516,8 +555,9 @@ class MainActivity : ComponentActivity() {
             } else {
                 SpendingOverviewCard()
                 ExportOptionsCard()
-                DailySpendingList()
+                YearlySpendingList()
                 MonthlySpendingList()
+                DailySpendingList()
             }
         }
     }
@@ -870,6 +910,42 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
+    fun YearlySpendingList() {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Yearly Spending",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (yearlySummaries.isEmpty()) {
+                    Text("No yearly data available")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.height(300.dp)
+                    ) {
+                        items(yearlySummaries) { summary ->
+                            YearlySpendingItem(summary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
     fun DailySpendingItem(summary: DailySummary) {
         val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
         var showDetails by remember { mutableStateOf(false) }
@@ -877,7 +953,11 @@ class MainActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { showDetails = !showDetails }
+                .clickable {
+                    // TODO: Navigate to SMS listing with date filter
+                    // Navigation will be implemented when we fix the navController access
+                    showDetails = !showDetails
+                }
                 .padding(vertical = 4.dp)
         ) {
             Row(
@@ -925,7 +1005,11 @@ class MainActivity : ComponentActivity() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { showDetails = !showDetails }
+                .clickable {
+                    // TODO: Navigate to SMS listing with month filter
+                    // Navigation will be implemented when we fix the navController access
+                    showDetails = !showDetails
+                }
                 .padding(vertical = 4.dp)
         ) {
             Row(
@@ -963,6 +1047,87 @@ class MainActivity : ComponentActivity() {
             }
 
             Divider(modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+
+    @Composable
+    fun YearlySpendingItem(summary: YearlySummary) {
+        var showDetails by remember { mutableStateOf(false) }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    // TODO: Navigate to SMS listing with year filter
+                    // Navigation will be implemented when we fix the navController access
+                    showDetails = !showDetails
+                }
+                .padding(vertical = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    summary.year,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "₹${String.format("%.2f", summary.totalSpent)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (showDetails && summary.monthlySummaries.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Monthly Breakdown (${summary.monthlySummaries.size} months):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                LazyColumn(
+                    modifier = Modifier.height(250.dp)
+                ) {
+                    items(summary.monthlySummaries) { monthlySummary ->
+                        MonthlySummaryDetailItem(monthlySummary)
+                    }
+                }
+            }
+
+            Divider(modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+
+    @Composable
+    fun MonthlySummaryDetailItem(monthlySummary: MonthlySummary) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        monthlySummary.month,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "₹${String.format("%.2f", monthlySummary.totalSpent)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
         }
     }
 

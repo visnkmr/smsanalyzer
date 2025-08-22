@@ -36,9 +36,21 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.border
 import com.smsanalytics.smstransactionanalyzer.model.ExcludedMessage
+import com.smsanalytics.smstransactionanalyzer.parser.SMSParser
 
 enum class TimeFilter {
     TODAY, THIS_WEEK, THIS_MONTH, CUSTOM_RANGE, ALL_TIME
+}
+
+enum class SMSFilterMode {
+    ALL_MESSAGES,        // Show all SMS
+    SENDER_SPECIFIC,     // Show SMS from specific sender
+    VENDOR_SPECIFIC,     // Show SMS from specific vendor
+    TRANSACTION_ONLY,    // Show only OTP-verified transaction SMS
+    NON_TRANSACTION_ONLY, // Show only non-transaction SMS
+    DATE_SPECIFIC,       // Show SMS from specific date
+    MONTH_SPECIFIC,      // Show SMS from specific month
+    YEAR_SPECIFIC        // Show SMS from specific year
 }
 
 data class DateRange(
@@ -52,6 +64,169 @@ data class MonthSummary(
     val totalAmount: Double,
     val messages: List<SMSReader.SMSMessage>
 )
+
+// Top level functions for unified SMS listing
+fun getModeTitle(mode: SMSFilterMode): String {
+    return when (mode) {
+        SMSFilterMode.ALL_MESSAGES -> "All Messages"
+        SMSFilterMode.SENDER_SPECIFIC -> "Messages by Sender"
+        SMSFilterMode.VENDOR_SPECIFIC -> "Messages by Vendor"
+        SMSFilterMode.TRANSACTION_ONLY -> "Transaction Messages"
+        SMSFilterMode.NON_TRANSACTION_ONLY -> "Non-Transaction Messages"
+        SMSFilterMode.DATE_SPECIFIC -> "Messages by Date"
+        SMSFilterMode.MONTH_SPECIFIC -> "Messages by Month"
+        SMSFilterMode.YEAR_SPECIFIC -> "Messages by Year"
+    }
+}
+
+fun getModeDisplayName(mode: SMSFilterMode): String {
+    return when (mode) {
+        SMSFilterMode.ALL_MESSAGES -> "All"
+        SMSFilterMode.SENDER_SPECIFIC -> "By Sender"
+        SMSFilterMode.VENDOR_SPECIFIC -> "By Vendor"
+        SMSFilterMode.TRANSACTION_ONLY -> "Transactions"
+        SMSFilterMode.NON_TRANSACTION_ONLY -> "Non-Transactions"
+        SMSFilterMode.DATE_SPECIFIC -> "By Date"
+        SMSFilterMode.MONTH_SPECIFIC -> "By Month"
+        SMSFilterMode.YEAR_SPECIFIC -> "By Year"
+    }
+}
+
+suspend fun bulkExcludeSelectedMessages(
+    messageIds: List<Long>,
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    database: SMSDatabase,
+    allMessages: List<SMSReader.SMSMessage>
+) {
+    scope.launch {
+        try {
+            val excludedMessageDao = database.excludedMessageDao()
+
+            messageIds.forEach { messageId ->
+                // Find message details from all messages list
+                val message = allMessages.find { it.id == messageId }
+                if (message != null) {
+                    val excludedMessage = ExcludedMessage(
+                        messageId = messageId,
+                        body = message.body,
+                        sender = message.sender,
+                        timestamp = message.timestamp
+                    )
+
+                    excludedMessageDao.insertExcludedMessage(excludedMessage)
+                }
+            }
+
+            Toast.makeText(context, "${messageIds.size} messages excluded successfully", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error bulk excluding messages: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UnifiedMessageItem(
+    message: SMSReader.SMSMessage,
+    isSelected: Boolean = false,
+    isSelectMode: Boolean = false,
+    onSelectionChanged: ((Boolean) -> Unit)? = null,
+    isTransactionSMS: Boolean = false
+) {
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.getDefault()) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clickable {
+                if (isSelectMode && onSelectionChanged != null) {
+                    onSelectionChanged(!isSelected)
+                }
+            },
+        border = BorderStroke(
+            1.dp,
+            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header with checkbox (if in select mode), sender, and type
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isSelectMode) {
+                        Checkbox(
+                            checked = isSelected,
+                            onCheckedChange = { onSelectionChanged?.invoke(it) }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    Text(
+                        text = message.sender,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isTransactionSMS) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+
+                    if (isTransactionSMS) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "Transaction",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = when (message.type) {
+                        1 -> "Inbox"
+                        2 -> "Sent"
+                        else -> "Unknown"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when (message.type) {
+                        1 -> Color(0xFF4CAF50)
+                        2 -> Color(0xFF2196F3)
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Date
+            Text(
+                text = dateFormat.format(Date(message.timestamp)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Message content
+            Text(
+                text = message.body,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = MaterialTheme.typography.bodyMedium.lineHeight
+            )
+        }
+    }
+}
 
 suspend fun getTotalMessageCount(context: android.content.Context): Int = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
     val contentResolver = context.contentResolver
@@ -133,14 +308,16 @@ fun bulkExcludeMessages(
             }
 
             // Add all messages to excluded list
-            activeMessages.forEach { message ->
-                val excludedMessage = ExcludedMessage(
-                    messageId = message.id,
-                    body = message.body,
-                    sender = message.sender,
-                    timestamp = message.timestamp
-                )
-                excludedMessageDao.insertExcludedMessage(excludedMessage)
+            activeMessages.forEach<SMSReader.SMSMessage> { message ->
+                scope.launch {
+                    val excludedMessage = ExcludedMessage(
+                        messageId = message.id,
+                        body = message.body,
+                        sender = message.sender,
+                        timestamp = message.timestamp
+                    )
+                    excludedMessageDao.insertExcludedMessage(excludedMessage)
+                }
             }
 
             Toast.makeText(context, "${activeMessages.size} messages excluded successfully", Toast.LENGTH_SHORT).show()
@@ -528,6 +705,442 @@ fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
                             )
                         }
                     }
+                    
+                    @OptIn(ExperimentalMaterial3Api::class)
+                    @Composable
+                    fun UnifiedSMSListingPage(
+                        navController: androidx.navigation.NavController,
+                        initialMode: SMSFilterMode = SMSFilterMode.ALL_MESSAGES,
+                        filterValue: String? = null // sender name, vendor name, date, etc.
+                    ) {
+                        val context = LocalContext.current
+                        val scope = rememberCoroutineScope()
+                    
+                        // State management
+                        var allMessages by remember { mutableStateOf<List<SMSReader.SMSMessage>>(emptyList()) }
+                        var filteredMessages by remember { mutableStateOf<List<SMSReader.SMSMessage>>(emptyList()) }
+                        var isLoading by remember { mutableStateOf(true) }
+                        var selectedMessages by remember { mutableStateOf<Set<Long>>(emptySet()) }
+                        var isSelectMode by remember { mutableStateOf(false) }
+                    
+                        // Filter states
+                        var currentMode by remember { mutableStateOf(initialMode) }
+                        var searchQuery by remember { mutableStateOf("") }
+                        var selectedSender by remember { mutableStateOf(filterValue ?: "") }
+                        var selectedDate by remember {
+                            mutableStateOf(
+                                when (initialMode) {
+                                    SMSFilterMode.DATE_SPECIFIC -> {
+                                        filterValue?.let { dateStr ->
+                                            try {
+                                                val parts = dateStr.split("-")
+                                                if (parts.size >= 3) {
+                                                    val year = parts[0].toInt()
+                                                    val month = parts[1].toInt() - 1 // Calendar months are 0-based
+                                                    val day = parts[2].toInt()
+                                                    Calendar.getInstance().apply {
+                                                        set(Calendar.YEAR, year)
+                                                        set(Calendar.MONTH, month)
+                                                        set(Calendar.DAY_OF_MONTH, day)
+                                                        set(Calendar.HOUR_OF_DAY, 0)
+                                                        set(Calendar.MINUTE, 0)
+                                                        set(Calendar.SECOND, 0)
+                                                        set(Calendar.MILLISECOND, 0)
+                                                    }.time
+                                                } else null
+                                            } catch (e: Exception) {
+                                                null
+                                            }
+                                        }
+                                    }
+                                    else -> null
+                                }
+                            )
+                        }
+                        var selectedMonth by remember {
+                            mutableStateOf(
+                                when (initialMode) {
+                                    SMSFilterMode.YEAR_SPECIFIC -> filterValue
+                                    SMSFilterMode.MONTH_SPECIFIC -> {
+                                        filterValue?.let { monthStr ->
+                                            try {
+                                                val parts = monthStr.split("-")
+                                                if (parts.size >= 2) {
+                                                    val year = parts[0].toInt()
+                                                    val month = parts[1].toInt()
+                                                    // Convert to month name format (e.g., "December 2023")
+                                                    val calendar = Calendar.getInstance()
+                                                    calendar.set(Calendar.YEAR, year)
+                                                    calendar.set(Calendar.MONTH, month - 1) // Calendar months are 0-based
+                                                    val monthFormat = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                                                    monthFormat.format(calendar.time)
+                                                } else monthStr
+                                            } catch (e: Exception) {
+                                                monthStr
+                                            }
+                                        }
+                                    }
+                                    else -> null
+                                }
+                            )
+                        }
+                    
+                        val smsReader = remember { SMSReader(context) }
+                        val database = remember { SMSDatabase.getInstance(context) }
+                        val parser = remember { SMSParser() }
+                    
+                        // Load all messages on launch
+                        LaunchedEffect(Unit) {
+                            if (smsReader.hasSMSPermission()) {
+                                scope.launch {
+                                    try {
+                                        allMessages = smsReader.readAllSMS()
+                                        isLoading = false
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Error loading messages: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        isLoading = false
+                                    }
+                                }
+                            } else {
+                                Toast.makeText(context, "SMS permission required", Toast.LENGTH_SHORT).show()
+                                isLoading = false
+                            }
+                        }
+                    
+                        // Filter messages based on current mode and search
+                        LaunchedEffect(currentMode, searchQuery, selectedSender, selectedDate, selectedMonth, allMessages) {
+                            var filtered = when (currentMode) {
+                                SMSFilterMode.ALL_MESSAGES -> allMessages
+                                SMSFilterMode.SENDER_SPECIFIC -> allMessages.filter { it.sender == selectedSender }
+                                SMSFilterMode.VENDOR_SPECIFIC -> allMessages.filter { it.sender == selectedSender }
+                                SMSFilterMode.TRANSACTION_ONLY -> allMessages.filter { parser.isTransactionSMS(it.body) }
+                                SMSFilterMode.NON_TRANSACTION_ONLY -> allMessages.filter { !parser.isTransactionSMS(it.body) }
+                                SMSFilterMode.DATE_SPECIFIC -> {
+                                    if (selectedDate != null) {
+                                        allMessages.filter { message ->
+                                            val messageDate = Date(message.timestamp)
+                                            messageDate.toString().substring(0, 10) == selectedDate.toString().substring(0, 10)
+                                        }
+                                    } else allMessages
+                                }
+                                SMSFilterMode.MONTH_SPECIFIC -> {
+                                    if (selectedMonth != null) {
+                                        allMessages.filter { message ->
+                                            val messageDate = Date(message.timestamp)
+                                            val monthFormat = SimpleDateFormat("MMM yyyy", Locale.getDefault())
+                                            monthFormat.format(messageDate) == selectedMonth
+                                        }
+                                    } else allMessages
+                                }
+                                SMSFilterMode.YEAR_SPECIFIC -> {
+                                    if (selectedMonth != null) { // Using selectedMonth for year filter
+                                        allMessages.filter { message ->
+                                            val messageDate = Date(message.timestamp)
+                                            val yearFormat = SimpleDateFormat("yyyy", Locale.getDefault())
+                                            yearFormat.format(messageDate) == selectedMonth
+                                        }
+                                    } else allMessages
+                                }
+                            }
+                    
+                            // Apply search filter
+                            if (searchQuery.isNotEmpty()) {
+                                filtered = filtered.filter { message ->
+                                    message.body.contains(searchQuery, ignoreCase = true) ||
+                                    message.sender.contains(searchQuery, ignoreCase = true)
+                                }
+                            }
+                    
+                            filteredMessages = filtered.sortedByDescending { it.timestamp }
+                        }
+                    
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            // Header with mode info and actions
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = getModeTitle(currentMode),
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (filterValue != null) {
+                                        Text(
+                                            text = filterValue,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                    
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (isSelectMode && filteredMessages.isNotEmpty()) {
+                                        IconButton(onClick = {
+                                            selectedMessages = filteredMessages.map { it.id }.toSet()
+                                        }) {
+                                            Text("☑️", style = MaterialTheme.typography.titleMedium)
+                                        }
+                                        IconButton(onClick = {
+                                            // Bulk exclude selected messages
+                                            scope.launch {
+                                                bulkExcludeSelectedMessages(selectedMessages.toList(), context, scope, database, allMessages)
+                                            }
+                                            selectedMessages = emptySet()
+                                            isSelectMode = false
+                                        }) {
+                                            Text("🚫", style = MaterialTheme.typography.titleMedium)
+                                        }
+                                    }
+                    
+                                    IconButton(onClick = { isSelectMode = !isSelectMode }) {
+                                        Text(if (isSelectMode) "✕" else "☑️", style = MaterialTheme.typography.titleMedium)
+                                    }
+                    
+                                    IconButton(onClick = { navController.navigate("dashboard") }) {
+                                        Text("←")
+                                    }
+                                }
+                            }
+                    
+                            // Mode selection chips
+                            LazyRow(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(SMSFilterMode.values()) { mode ->
+                                    FilterChip(
+                                        selected = currentMode == mode,
+                                        onClick = {
+                                            currentMode = mode
+                                            // Reset filter values when mode changes
+                                            selectedSender = ""
+                                            selectedDate = null
+                                            selectedMonth = null
+                                        },
+                                        label = { Text(getModeDisplayName(mode)) }
+                                    )
+                                }
+                            }
+                    
+                            // Search bar
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = searchQuery,
+                                        onValueChange = { searchQuery = it },
+                                        label = { Text("Search messages...") },
+                                        placeholder = { Text("Enter text to search") },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        leadingIcon = { Text("🔍") }
+                                    )
+                    
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Text("✕", style = MaterialTheme.typography.bodyLarge)
+                                        }
+                                    }
+                                }
+                            }
+                    
+                            // Mode-specific filters
+                            when (currentMode) {
+                                SMSFilterMode.SENDER_SPECIFIC, SMSFilterMode.VENDOR_SPECIFIC -> {
+                                    // Sender/Vendor selection
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                text = "Select ${if (currentMode == SMSFilterMode.SENDER_SPECIFIC) "Sender" else "Vendor"}",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                    
+                                            Spacer(modifier = Modifier.height(8.dp))
+                    
+                                            // Get unique senders/vendors
+                                            val uniqueSenders = allMessages.map { it.sender }.distinct().sorted()
+                    
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                items(uniqueSenders) { sender ->
+                                                    FilterChip(
+                                                        selected = selectedSender == sender,
+                                                        onClick = { selectedSender = sender },
+                                                        label = { Text(sender) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                    
+                                SMSFilterMode.DATE_SPECIFIC -> {
+                                    // Date picker
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                text = "Select Date",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                    
+                                            Spacer(modifier = Modifier.height(8.dp))
+                    
+                                            Button(onClick = {
+                                                // Show date picker dialog
+                                                // For now, just set to today
+                                                selectedDate = Date()
+                                            }) {
+                                                Text(selectedDate?.let {
+                                                    SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(it)
+                                                } ?: "Pick Date")
+                                            }
+                                        }
+                                    }
+                                }
+                    
+                                SMSFilterMode.MONTH_SPECIFIC -> {
+                                    // Month selection
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(
+                                                text = "Select Month",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                    
+                                            Spacer(modifier = Modifier.height(8.dp))
+                    
+                                            val availableMonths = allMessages.map { message ->
+                                                val messageDate = Date(message.timestamp)
+                                                val monthFormat = SimpleDateFormat("MMM yyyy", Locale.getDefault())
+                                                monthFormat.format(messageDate)
+                                            }.distinct().sorted()
+                    
+                                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                items(availableMonths) { month ->
+                                                    FilterChip(
+                                                        selected = selectedMonth == month,
+                                                        onClick = { selectedMonth = month },
+                                                        label = { Text(month) }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                    
+                                else -> {} // No additional filters needed
+                            }
+                    
+                            // Results count
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${filteredMessages.size} messages",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                    
+                                    if (isSelectMode) {
+                                        Text(
+                                            text = "${selectedMessages.size} selected",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                    
+                            // Messages list
+                            if (isLoading) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator()
+                                }
+                            } else if (filteredMessages.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = "No messages found",
+                                            style = MaterialTheme.typography.bodyLarge
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "Try changing the filter or search criteria",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            } else {
+                                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                    items(filteredMessages) { message ->
+                                        UnifiedMessageItem(
+                                            message = message,
+                                            isSelected = selectedMessages.contains(message.id),
+                                            isSelectMode = isSelectMode,
+                                            onSelectionChanged = { selected: Boolean ->
+                                                selectedMessages = if (selected) {
+                                                    selectedMessages + message.id
+                                                } else {
+                                                    selectedMessages - message.id
+                                                }
+                                            },
+                                            isTransactionSMS = parser.isTransactionSMS(message.body)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    
+                    
                 }
             }
         }
