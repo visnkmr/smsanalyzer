@@ -75,6 +75,11 @@ fun DashboardScreen(
                     SpendingOverviewCard(transactions)
                 }
 
+                // Quick Access Section
+                item {
+                    QuickAccessCard(navController)
+                }
+
                 // Export Options
                 item {
                     ExportOptionsCard(onExportData)
@@ -167,6 +172,53 @@ fun SpendingOverviewCard(transactions: List<Transaction>) {
             Text("Total Debit: ₹${String.format("%.2f", debitTransactions.sumOf { it.amount })}")
             Text("Total Credit: ₹${String.format("%.2f", creditTransactions.sumOf { it.amount })}")
             Text("Net Spending: ₹${String.format("%.2f", totalSpent)}")
+        }
+    }
+}
+
+@Composable
+fun QuickAccessCard(navController: NavController) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "🚀 Quick Access",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val quickAccessItems = listOf(
+                Triple("🏪 Vendor Management", "vendor_management", "Manage and exclude vendors"),
+                Triple("📱 Sender Management", "sender_management", "Manage and exclude senders"),
+                Triple("⚙️ Category Rules", "category_rules", "Manage transaction categorization rules"),
+                Triple("👥 Vendor Groups", "vendor_group_management", "Create and manage vendor groups"),
+                Triple("📊 Group Spending", "group_spending_overview", "View spending by vendor groups"),
+                Triple("📤 Transaction SMS View", "transaction_sms_view", "View all transaction-related SMS"),
+                Triple("🚫 Excluded Messages", "excluded_messages", "View and manage excluded transactions"),
+                Triple("💰 Credit Summaries", "credit_summaries", "View all credit transactions and summaries")
+            )
+
+            quickAccessItems.chunked(2).forEach { rowItems ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    rowItems.forEach { (title, route, description) ->
+                        OutlinedButton(
+                            onClick = { navController.navigate(route) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(8.dp)
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
     }
 }

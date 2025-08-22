@@ -3,6 +3,7 @@ package com.smsanalytics.smstransactionanalyzer.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +18,8 @@ fun SettingsScreen(navController: NavController) {
     var selectedHomeScreen by remember { mutableStateOf("message_browser") }
     var showAppMap by remember { mutableStateOf(false) }
     var showFilteringSettings by remember { mutableStateOf(false) }
+    var showCustomFilters by remember { mutableStateOf(false) }
+    var newCustomFilter by remember { mutableStateOf("") }
 
     // Filter patterns state - now just enabled/disabled state
     var enabledPatterns by remember {
@@ -24,6 +27,11 @@ fun SettingsScreen(navController: NavController) {
             "%transaction%", "%payment%", "%debit%", "%credit%", "%amount%",
             "%rs%", "%₹%", "%inr%", "%debited%"
         ))
+    }
+
+    // Custom filter patterns
+    var customPatterns by remember {
+        mutableStateOf(setOf<String>())
     }
 
     LazyColumn(
@@ -132,7 +140,10 @@ fun SettingsScreen(navController: NavController) {
                                         Card(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 2.dp),
+                                                .padding(vertical = 2.dp)
+                                                .clickable {
+                                                    navController.navigate(route)
+                                                },
                                             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                                         ) {
                                             Column(modifier = Modifier.padding(12.dp)) {
@@ -346,6 +357,163 @@ fun SettingsScreen(navController: NavController) {
 
                         Text(
                             text = "💡 Tip: Enable patterns that match the keywords and symbols in your bank's SMS messages. This helps the app identify financial transactions accurately.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // Custom Filter Patterns Section
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Custom Filter Patterns",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Button(
+                            onClick = { showCustomFilters = !showCustomFilters }
+                        ) {
+                            Text(if (showCustomFilters) "Hide" else "Manage")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Add your own custom patterns to detect transaction SMS messages",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (showCustomFilters) {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Add new custom filter
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = newCustomFilter,
+                                onValueChange = { newCustomFilter = it },
+                                label = { Text("New pattern") },
+                                placeholder = { Text("e.g., %credited% or %debited%") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    if (newCustomFilter.isNotBlank()) {
+                                        val pattern = if (newCustomFilter.startsWith("%") && newCustomFilter.endsWith("%")) {
+                                            newCustomFilter
+                                        } else {
+                                            "%${newCustomFilter}%"
+                                        }
+                                        customPatterns = customPatterns + pattern
+                                        enabledPatterns = enabledPatterns + pattern
+                                        newCustomFilter = ""
+                                        // Toast.makeText(context, "Custom pattern added: $pattern", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = newCustomFilter.isNotBlank()
+                            ) {
+                                Text("Add")
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Your Custom Patterns:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        if (customPatterns.isEmpty()) {
+                            Text(
+                                text = "No custom patterns added yet",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        } else {
+                            customPatterns.forEach { pattern ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = pattern.removeSurrounding("%"),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+
+                                        IconButton(
+                                            onClick = {
+                                                customPatterns = customPatterns - pattern
+                                                enabledPatterns = enabledPatterns - pattern
+                                            }
+                                        ) {
+                                            Text(
+                                                "✕",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "💡 Tips for Custom Patterns:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "• Use % at start and end (e.g., %credited%)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "• Patterns are case-insensitive",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "• Test your patterns with different SMS formats",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

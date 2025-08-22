@@ -479,9 +479,8 @@ class MainActivity : ComponentActivity() {
     private fun shouldUseCachedData(lastAnalysis: AnalysisMetadata?, cachedTransactions: List<SMSAnalysisCache>): Boolean {
         if (lastAnalysis == null || cachedTransactions.isEmpty()) return false
 
-        // Use cache if analysis was done within the last hour
-        val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000)
-        return lastAnalysis.lastAnalysisDate > oneHourAgo
+        // Always use cache if available - no expiry
+        return true
     }
 
     private fun calculateYearlySpending(monthlySummaries: List<MonthlySummary>): List<YearlySummary> {

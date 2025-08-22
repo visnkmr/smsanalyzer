@@ -365,9 +365,8 @@ private fun performLiteralSearch(message: SMSReader.SMSMessage, query: String): 
 private fun shouldUseCachedData(lastAnalysis: com.smsanalytics.smstransactionanalyzer.model.AnalysisMetadata?, cachedTransactions: List<com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache>): Boolean {
     if (lastAnalysis == null || cachedTransactions.isEmpty()) return false
 
-    // Use cache if analysis was done within the last hour
-    val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000)
-    return lastAnalysis.lastAnalysisDate > oneHourAgo
+    // Always use cache if available - no expiry
+    return true
 }
 
 private suspend fun updateCacheWithFreshSMS(messages: List<SMSReader.SMSMessage>) {
@@ -418,7 +417,7 @@ fun MessageBrowserScreen(
     var monthSummaries by remember { mutableStateOf<List<MonthSummary>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var isLoadingMore by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableStateOf(TimeFilter.ALL_TIME) }
+    var selectedTab by remember { mutableStateOf(TimeFilter.THIS_MONTH) }
     var customDateRange by remember { mutableStateOf<DateRange?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showMonthDropdown by remember { mutableStateOf<String?>(null) }
