@@ -40,6 +40,9 @@ interface VendorGroupDao {
     @Query("SELECT * FROM vendor_group_members WHERE groupId = :groupId")
     fun getMembersByGroupId(groupId: Long): Flow<List<VendorGroupMember>>
 
+    @Query("SELECT * FROM vendor_group_members")
+    fun getAllGroupMembers(): Flow<List<VendorGroupMember>>
+
     @Query("SELECT * FROM vendors WHERE id IN (SELECT vendorId FROM vendor_group_members WHERE groupId = :groupId) AND isExcluded = 0")
     fun getVendorsByGroupId(groupId: Long): Flow<List<Vendor>>
 }

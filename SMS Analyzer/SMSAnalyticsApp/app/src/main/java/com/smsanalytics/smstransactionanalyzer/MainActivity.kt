@@ -42,6 +42,11 @@ import com.smsanalytics.smstransactionanalyzer.ui.MessageBrowserScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.ExcludedMessagesScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.CreditSummariesScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.DashboardScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.SenderManagementScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.VendorManagementScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.VendorGroupManagementScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.GroupSpendingOverviewScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.RuleTestingScreen
 import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
 import com.smsanalytics.smstransactionanalyzer.util.VendorExtractor
 import com.smsanalytics.smstransactionanalyzer.util.SenderExtractor
@@ -573,13 +578,18 @@ class MainActivity : ComponentActivity() {
                 MessageBrowserScreen(navController)
             }
             composable("vendor_management") {
-                MessageBrowserScreen(
+                VendorManagementScreen(
                     navController = navController,
-                    filterMode = com.smsanalytics.smstransactionanalyzer.ui.SMSFilterMode.TRANSACTION_ONLY
+                    transactions = transactions,
+                    database = database
                 )
             }
             composable("sender_management") {
-                MessageBrowserScreen(navController)
+                SenderManagementScreen(
+                    navController = navController,
+                    transactions = transactions,
+                    database = database
+                )
             }
             composable("vendor_sms_detail/{vendorName}") { backStackEntry ->
                 val vendorName = backStackEntry.arguments?.getString("vendorName") ?: ""
@@ -636,18 +646,29 @@ class MainActivity : ComponentActivity() {
                 )
             }
             composable("vendor_group_management") {
-                // TODO: Extract VendorGroupManagementScreen to separate file
-                Text("Vendor Group Management - Coming Soon")
+                VendorGroupManagementScreen(
+                    navController = navController,
+                    database = database
+                )
             }
             composable("group_spending_overview") {
-                // TODO: Extract GroupSpendingOverviewScreen to separate file
-                Text("Group Spending Overview - Coming Soon")
+                GroupSpendingOverviewScreen(
+                    navController = navController,
+                    database = database
+                )
             }
             composable("settings") {
                 com.smsanalytics.smstransactionanalyzer.ui.screens.SettingsScreen(navController)
             }
             composable("data_inspection") {
                 com.smsanalytics.smstransactionanalyzer.ui.screens.DataInspectionScreen(navController)
+            }
+            composable("rule_testing") {
+                RuleTestingScreen(
+                    navController = navController,
+                    database = database,
+                    transactions = transactions
+                )
             }
         }
     }

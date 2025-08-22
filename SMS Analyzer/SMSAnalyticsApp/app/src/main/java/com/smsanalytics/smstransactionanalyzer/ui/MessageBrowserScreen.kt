@@ -16,6 +16,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.lifecycleScope
 import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
@@ -100,28 +103,30 @@ suspend fun bulkExcludeSelectedMessages(
     scope: kotlinx.coroutines.CoroutineScope,
     database: SMSDatabase,
     allMessages: List<SMSReader.SMSMessage>
-) {
-    scope.launch {
-        try {
-            val excludedMessageDao = database.excludedMessageDao()
+) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+    try {
+        val excludedMessageDao = database.excludedMessageDao()
 
-            messageIds.forEach { messageId ->
-                // Find message details from all messages list
-                val message = allMessages.find { it.id == messageId }
-                if (message != null) {
-                    val excludedMessage = ExcludedMessage(
-                        messageId = messageId,
-                        body = message.body,
-                        sender = message.sender,
-                        timestamp = message.timestamp
-                    )
+        messageIds.forEach { messageId ->
+            // Find message details from all messages list
+            val message = allMessages.find { it.id == messageId }
+            if (message != null) {
+                val excludedMessage = ExcludedMessage(
+                    messageId = messageId,
+                    body = message.body,
+                    sender = message.sender,
+                    timestamp = message.timestamp
+                )
 
-                    excludedMessageDao.insertExcludedMessage(excludedMessage)
-                }
+                excludedMessageDao.insertExcludedMessage(excludedMessage)
             }
+        }
 
+        withContext(kotlinx.coroutines.Dispatchers.Main) {
             Toast.makeText(context, "${messageIds.size} messages excluded successfully", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
+        }
+    } catch (e: Exception) {
+        withContext(kotlinx.coroutines.Dispatchers.Main) {
             Toast.makeText(context, "Error bulk excluding messages: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
@@ -293,37 +298,40 @@ suspend fun loadMessageBatch(context: android.content.Context, offset: Int, limi
     }
 }
 
-fun bulkExcludeMessages(
+suspend fun bulkExcludeMessages(
     messagesToExclude: List<SMSReader.SMSMessage>,
     excludedMessageIds: Set<Long>,
     context: android.content.Context,
-    scope: kotlinx.coroutines.CoroutineScope,
     database: SMSDatabase,
     excludedMessageDao: com.smsanalytics.smstransactionanalyzer.database.ExcludedMessageDao
-) {
-    scope.launch {
-        try {
-            val activeMessages = messagesToExclude.filter { !excludedMessageIds.contains(it.id) }
-            if (activeMessages.isEmpty()) {
+) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+    try {
+        val activeMessages = messagesToExclude.filter { !excludedMessageIds.contains(it.id) }
+        if (activeMessages.isEmpty()) {
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
                 Toast.makeText(context, "No messages to exclude", Toast.LENGTH_SHORT).show()
-                return@launch
             }
+            return@withContext
+        }
 
-            // Add all messages to excluded list
-            activeMessages.forEach<SMSReader.SMSMessage> { message ->
-                scope.launch {
-                    val excludedMessage = ExcludedMessage(
-                        messageId = message.id,
-                        body = message.body,
-                        sender = message.sender,
-                        timestamp = message.timestamp
-                    )
-                    excludedMessageDao.insertExcludedMessage(excludedMessage)
-                }
+        // Add all messages to excluded list in batches
+        activeMessages.chunked(50).forEach { batch ->
+            batch.forEach { message ->
+                val excludedMessage = ExcludedMessage(
+                    messageId = message.id,
+                    body = message.body,
+                    sender = message.sender,
+                    timestamp = message.timestamp
+                )
+                excludedMessageDao.insertExcludedMessage(excludedMessage)
             }
+        }
 
+        withContext(kotlinx.coroutines.Dispatchers.Main) {
             Toast.makeText(context, "${activeMessages.size} messages excluded successfully", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
+        }
+    } catch (e: Exception) {
+        withContext(kotlinx.coroutines.Dispatchers.Main) {
             Toast.makeText(context, "Error bulk excluding messages: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
@@ -369,8 +377,9 @@ private fun shouldUseCachedData(lastAnalysis: com.smsanalytics.smstransactionana
     return true
 }
 
-private suspend fun updateCacheWithFreshSMS(messages: List<SMSReader.SMSMessage>) {
+private suspend fun updateCacheWithFreshSMS(messages: List<SMSReader.SMSMessage>) = withContext(kotlinx.coroutines.Dispatchers.IO) {
     try {
+        // Process in smaller batches to avoid blocking UI
         val cacheEntries = messages.map { message ->
             com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache(
                 messageId = message.id,
@@ -388,8 +397,14 @@ private suspend fun updateCacheWithFreshSMS(messages: List<SMSReader.SMSMessage>
         }
 
         // Insert in batches to avoid memory issues
-        cacheEntries.chunked(100).forEach { batch ->
-            // Insert cache entries
+        cacheEntries.chunked(50).forEach { batch ->
+            try {
+                // Insert cache entries - this would need actual database operation
+                // For now, just log that we'd insert them
+                Log.d("MessageBrowserScreen", "Would insert ${batch.size} cache entries")
+            } catch (e: Exception) {
+                Log.w("MessageBrowserScreen", "Error inserting cache batch", e)
+            }
         }
 
     } catch (e: Exception) {
@@ -418,6 +433,7 @@ fun MessageBrowserScreen(
     var isLoading by remember { mutableStateOf(true) }
     var isLoadingMore by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(TimeFilter.THIS_MONTH) }
+    var isFiltering by remember { mutableStateOf(false) }
     var customDateRange by remember { mutableStateOf<DateRange?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showMonthDropdown by remember { mutableStateOf<String?>(null) }
@@ -433,6 +449,7 @@ fun MessageBrowserScreen(
     var smsFilterOption by remember { mutableStateOf("ALL") }
     var isLoadingFromCache by remember { mutableStateOf(false) }
     var hasFreshData by remember { mutableStateOf(false) }
+    var currentFilteringJob by remember { mutableStateOf<Job?>(null) }
 
     // Filter parameters from navigation
     var currentFilterMode by remember { mutableStateOf(filterMode) }
@@ -442,28 +459,40 @@ fun MessageBrowserScreen(
     val database = remember { SMSDatabase.getInstance(context) }
     val excludedMessageDao = remember { database.excludedMessageDao() }
 
-    // Load excluded message IDs
+    // Load excluded message IDs (on background thread)
     LaunchedEffect(Unit) {
         scope.launch {
             try {
-                excludedMessageIds = excludedMessageDao.getAllExcludedMessageIds().toSet()
+                excludedMessageIds = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    excludedMessageDao.getAllExcludedMessageIds().toSet()
+                }
             } catch (e: Exception) {
-                // Handle error silently for now
+                Log.w("MessageBrowserScreen", "Error loading excluded message IDs", e)
             }
         }
     }
 
-    // Load messages progressively from cache first, then SMS database
+    // Cleanup filtering job when composable is disposed
+    DisposableEffect(Unit) {
+        onDispose {
+            currentFilteringJob?.cancel()
+        }
+    }
+
+    // Optimized loading with proper background processing
     LaunchedEffect(Unit) {
         if (smsReader.hasSMSPermission()) {
             scope.launch {
                 try {
                     isLoading = true
 
-                    // Step 1: Load from cache IMMEDIATELY for instant display
+                    // Load cache data first (on background thread)
                     try {
                         isLoadingFromCache = true
-                        val cachedMessages = database.smsAnalysisCacheDao().getCachedTransactions()
+                        val cachedMessages = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            database.smsAnalysisCacheDao().getCachedTransactions()
+                        }
+
                         if (cachedMessages.isNotEmpty()) {
                             // Convert cached transactions to SMSMessage format
                             val cachedSmsMessages = cachedMessages.map { cache ->
@@ -476,77 +505,64 @@ fun MessageBrowserScreen(
                                 )
                             }
 
+                            // Update UI state
                             allMessages = cachedSmsMessages
                             loadedMessageCount = cachedSmsMessages.size
                             totalMessageCount = cachedSmsMessages.size
                             monthSummaries = createMonthSummaries(cachedSmsMessages)
 
-                            // Apply current filters immediately
-                            var filtered = filterMessages(selectedTab, allMessages, customDateRange)
-                            if (searchQuery.isNotEmpty()) {
-                                filtered = filtered.filter { message ->
-                                    performSmartSearch(message, searchQuery)
-                                }
-                            }
-                            filteredMessages = filtered.sortedByDescending { it.timestamp }
-
                             // Show cached data immediately
                             isLoadingFromCache = false
-
-                            Log.d("MessageBrowserScreen", "Loaded ${cachedSmsMessages.size} messages from cache immediately")
+                            Log.d("MessageBrowserScreen", "Loaded ${cachedSmsMessages.size} messages from cache")
                         } else {
-                            Log.d("MessageBrowserScreen", "No cached data available")
                             isLoadingFromCache = false
+                            Log.d("MessageBrowserScreen", "No cached data available")
                         }
                     } catch (e: Exception) {
                         Log.w("MessageBrowserScreen", "Cache loading failed", e)
                         isLoadingFromCache = false
                     }
 
-                    // Step 2: Load fresh SMS data in background and update progressively
-                    scope.launch {
-                        try {
-                            val allSmsMessages = smsReader.readAllSMS()
+                    // Set initial loading to false after cache load
+                    isLoading = false
 
-                            if (allSmsMessages.isNotEmpty()) {
-                                Log.d("MessageBrowserScreen", "Loaded ${allSmsMessages.size} fresh SMS messages")
+                    // Load fresh SMS data in background only if needed
+                    if (allMessages.isEmpty()) {
+                        scope.launch {
+                            try {
+                                isLoadingMore = true
+                                val allSmsMessages = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    smsReader.readAllSMS()
+                                }
 
-                                // Update with fresh SMS data
-                                allMessages = allSmsMessages
-                                loadedMessageCount = allSmsMessages.size
-                                totalMessageCount = allSmsMessages.size
-                                monthSummaries = createMonthSummaries(allSmsMessages)
+                                if (allSmsMessages.isNotEmpty()) {
+                                    Log.d("MessageBrowserScreen", "Loaded ${allSmsMessages.size} fresh SMS messages")
 
-                                // Re-apply current filters with fresh data
-                                var filtered = filterMessages(selectedTab, allMessages, customDateRange)
-                                if (searchQuery.isNotEmpty()) {
-                                    filtered = filtered.filter { message ->
-                                        performSmartSearch(message, searchQuery)
+                                    // Update with fresh SMS data
+                                    allMessages = allSmsMessages
+                                    loadedMessageCount = allSmsMessages.size
+                                    totalMessageCount = allSmsMessages.size
+                                    monthSummaries = createMonthSummaries(allSmsMessages)
+                                    hasFreshData = true
+
+                                    // Update cache in background
+                                    scope.launch {
+                                        try {
+                                            withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                updateCacheWithFreshSMS(allSmsMessages)
+                                            }
+                                            Log.d("MessageBrowserScreen", "Cache updated with fresh SMS data")
+                                        } catch (e: Exception) {
+                                            Log.w("MessageBrowserScreen", "Cache update failed", e)
+                                        }
                                     }
                                 }
-                                filteredMessages = filtered.sortedByDescending { it.timestamp }
-
-                                // Mark that we now have fresh data
-                                hasFreshData = true
-
-                                // Update cache in background
-                                scope.launch {
-                                    try {
-                                        updateCacheWithFreshSMS(allSmsMessages)
-                                        Log.d("MessageBrowserScreen", "Cache updated with fresh SMS data")
-                                    } catch (e: Exception) {
-                                        Log.w("MessageBrowserScreen", "Cache update failed", e)
-                                    }
-                                }
+                            } catch (e: Exception) {
+                                Log.e("MessageBrowserScreen", "Error loading fresh SMS messages", e)
+                            } finally {
+                                isLoadingMore = false
+                                Log.d("MessageBrowserScreen", "Fresh data loading completed")
                             }
-                        } catch (e: Exception) {
-                            Log.e("MessageBrowserScreen", "Error loading fresh SMS messages", e)
-                            // Keep cached data if SMS loading fails
-                        } finally {
-                            // Now set loading to false since we've finished all operations
-                            isLoading = false
-                            isLoadingMore = false
-                            Log.d("MessageBrowserScreen", "Loading completed")
                         }
                     }
 
@@ -562,45 +578,80 @@ fun MessageBrowserScreen(
         }
     }
 
-    // Filter messages when tab changes, search query changes, or filter parameters change
+    // Optimized filtering with debouncing and job management
     LaunchedEffect(selectedTab, customDateRange, allMessages, searchQuery, currentFilterMode, currentFilterValue) {
-        var filtered = filterMessages(selectedTab, allMessages, customDateRange)
-
-        // Apply specific filter mode if provided
-        when (currentFilterMode) {
-            SMSFilterMode.SENDER_SPECIFIC -> {
-                if (currentFilterValue != null) {
-                    filtered = filtered.filter { it.sender == currentFilterValue }
-                }
-            }
-            SMSFilterMode.VENDOR_SPECIFIC -> {
-                if (currentFilterValue != null) {
-                    filtered = filtered.filter { it.sender == currentFilterValue }
-                }
-            }
-            SMSFilterMode.TRANSACTION_ONLY -> {
-                filtered = filtered.filter { message ->
-                    message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE)))
-                }
-            }
-            SMSFilterMode.NON_TRANSACTION_ONLY -> {
-                filtered = filtered.filter { message ->
-                    !message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE)))
-                }
-            }
-            else -> {
-                // No additional filtering for ALL_MESSAGES or other modes
-            }
+        if (allMessages.isEmpty()) {
+            filteredMessages = emptyList()
+            return@LaunchedEffect
         }
 
-        // Apply search filter
-        if (searchQuery.isNotEmpty()) {
-            filtered = filtered.filter { message ->
-                performSmartSearch(message, searchQuery)
+        // Cancel any existing filtering job
+        currentFilteringJob?.cancel()
+
+        isFiltering = true
+
+        // Debounce search queries to avoid excessive filtering
+        val shouldDebounce = searchQuery.isNotEmpty() && searchQuery.length > 2
+
+        currentFilteringJob = scope.launch {
+            try {
+                // Add debounce delay for search queries
+                if (shouldDebounce) {
+                    delay(300) // 300ms debounce for search
+                }
+
+                val filtered = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    var result = filterMessages(selectedTab, allMessages, customDateRange)
+
+                    // Apply specific filter mode if provided
+                    when (currentFilterMode) {
+                        SMSFilterMode.SENDER_SPECIFIC -> {
+                            if (currentFilterValue != null) {
+                                result = result.filter { it.sender == currentFilterValue }
+                            }
+                        }
+                        SMSFilterMode.VENDOR_SPECIFIC -> {
+                            if (currentFilterValue != null) {
+                                result = result.filter { it.sender == currentFilterValue }
+                            }
+                        }
+                        SMSFilterMode.TRANSACTION_ONLY -> {
+                            result = result.filter { message ->
+                                message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE)))
+                            }
+                        }
+                        SMSFilterMode.NON_TRANSACTION_ONLY -> {
+                            result = result.filter { message ->
+                                !message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE)))
+                            }
+                        }
+                        else -> {
+                            // No additional filtering for ALL_MESSAGES or other modes
+                        }
+                    }
+
+                    // Apply search filter
+                    if (searchQuery.isNotEmpty()) {
+                        result = result.filter { message ->
+                            performSmartSearch(message, searchQuery)
+                        }
+                    }
+
+                    result.sortedByDescending { it.timestamp }
+                }
+
+                // Update UI on main thread
+                filteredMessages = filtered
+
+            } catch (e: Exception) {
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    Log.e("MessageBrowserScreen", "Error filtering messages", e)
+                }
+                // Keep previous filtered messages on error
+            } finally {
+                isFiltering = false
             }
         }
-
-        filteredMessages = filtered
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -651,7 +702,7 @@ fun MessageBrowserScreen(
         }
 
         // Data status indicator
-        if (isLoadingFromCache || isLoading) {
+        if (isLoadingFromCache || isLoading || isFiltering) {
             Spacer(modifier = Modifier.height(8.dp))
             Card(
                 modifier = Modifier
@@ -673,11 +724,15 @@ fun MessageBrowserScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isLoadingFromCache) "Loading from cache..." else "Loading fresh data...",
+                        text = when {
+                            isFiltering -> "Filtering messages..."
+                            isLoadingFromCache -> "Loading from cache..."
+                            else -> "Loading fresh data..."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
-                    if (hasFreshData) {
+                    if (hasFreshData && !isLoading && !isLoadingFromCache && !isFiltering) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "✓ Fresh data loaded",
@@ -1500,7 +1555,7 @@ fun MessageBrowserScreen(
         }
 
         // Messages list
-        if (isLoading) {
+        if (isLoading || isFiltering) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -1508,7 +1563,7 @@ fun MessageBrowserScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Loading messages...")
+                    Text(if (isFiltering) "Filtering messages..." else "Loading messages...")
                 }
             }
         } else if (filteredMessages.isEmpty()) {
@@ -1537,18 +1592,20 @@ fun MessageBrowserScreen(
                         isExcluded = excludedMessageIds.contains(message.id),
                         onExcludeToggle = { exclude ->
                             scope.launch {
-                                if (exclude) {
-                                    val excludedMessage = ExcludedMessage(
-                                        messageId = message.id,
-                                        body = message.body,
-                                        sender = message.sender,
-                                        timestamp = message.timestamp
-                                    )
-                                    excludedMessageDao.insertExcludedMessage(excludedMessage)
-                                    excludedMessageIds = excludedMessageIds + message.id
-                                } else {
-                                    excludedMessageDao.deleteExcludedMessageById(message.id)
-                                    excludedMessageIds = excludedMessageIds - message.id
+                                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    if (exclude) {
+                                        val excludedMessage = ExcludedMessage(
+                                            messageId = message.id,
+                                            body = message.body,
+                                            sender = message.sender,
+                                            timestamp = message.timestamp
+                                        )
+                                        excludedMessageDao.insertExcludedMessage(excludedMessage)
+                                        excludedMessageIds = excludedMessageIds + message.id
+                                    } else {
+                                        excludedMessageDao.deleteExcludedMessageById(message.id)
+                                        excludedMessageIds = excludedMessageIds - message.id
+                                    }
                                 }
                             }
                         }
@@ -1631,14 +1688,15 @@ fun MessageBrowserScreen(
                                     isSelectMode = false
                                 } else {
                                     // Exclude filtered messages
-                                    bulkExcludeMessages(
-                                        filteredMessages,
-                                        excludedMessageIds,
-                                        context,
-                                        scope,
-                                        database,
-                                        excludedMessageDao
-                                    )
+                                    scope.launch {
+                                        bulkExcludeMessages(
+                                            filteredMessages,
+                                            excludedMessageIds,
+                                            context,
+                                            database,
+                                            excludedMessageDao
+                                        )
+                                    }
                                 }
                                 showBulkExcludeDialog = false
                             }

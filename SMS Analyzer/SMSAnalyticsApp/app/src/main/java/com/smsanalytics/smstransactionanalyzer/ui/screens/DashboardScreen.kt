@@ -191,6 +191,7 @@ fun QuickAccessCard(navController: NavController) {
                 Triple("🏪 Vendor Management", "vendor_management", "Manage and exclude vendors"),
                 Triple("📱 Sender Management", "sender_management", "Manage and exclude senders"),
                 Triple("⚙️ Category Rules", "category_rules", "Manage transaction categorization rules"),
+                Triple("🧪 Test Rules", "rule_testing", "Test categorization rules on messages"),
                 Triple("👥 Vendor Groups", "vendor_group_management", "Create and manage vendor groups"),
                 Triple("📊 Group Spending", "group_spending_overview", "View spending by vendor groups"),
                 Triple("📤 Transaction SMS View", "transaction_sms_view", "View all transaction-related SMS"),
