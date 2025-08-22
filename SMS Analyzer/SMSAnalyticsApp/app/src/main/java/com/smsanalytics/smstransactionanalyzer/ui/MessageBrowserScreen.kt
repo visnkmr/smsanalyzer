@@ -14,6 +14,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.lifecycleScope
 import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
 import com.smsanalytics.smstransactionanalyzer.sms.SMSReader
@@ -50,9 +53,147 @@ data class MonthSummary(
     val messages: List<SMSReader.SMSMessage>
 )
 
+suspend fun getTotalMessageCount(context: android.content.Context): Int = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    val contentResolver = context.contentResolver
+    val smsUri = android.net.Uri.parse("content://sms/")
+
+    return@withContext try {
+        contentResolver.query(smsUri, arrayOf("COUNT(*)"), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getInt(0)
+            } else 0
+        } ?: 0
+    } catch (e: Exception) {
+        0
+    }
+}
+
+suspend fun loadMessageBatch(context: android.content.Context, offset: Int, limit: Int): List<SMSReader.SMSMessage> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    val contentResolver = context.contentResolver
+    val smsUri = android.net.Uri.parse("content://sms/")
+
+    val projection = arrayOf(
+        android.provider.Telephony.Sms._ID,
+        android.provider.Telephony.Sms.BODY,
+        android.provider.Telephony.Sms.ADDRESS,
+        android.provider.Telephony.Sms.DATE,
+        android.provider.Telephony.Sms.TYPE
+    )
+
+    return@withContext try {
+        val messages = mutableListOf<SMSReader.SMSMessage>()
+
+        contentResolver.query(
+            smsUri,
+            projection,
+            null,
+            null,
+            "${android.provider.Telephony.Sms.DATE} DESC LIMIT $limit OFFSET $offset"
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                try {
+                    val smsBody = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.Telephony.Sms.BODY))
+                    val sender = cursor.getString(cursor.getColumnIndexOrThrow(android.provider.Telephony.Sms.ADDRESS))
+                    val timestamp = cursor.getLong(cursor.getColumnIndexOrThrow(android.provider.Telephony.Sms.DATE))
+                    val type = cursor.getInt(cursor.getColumnIndexOrThrow(android.provider.Telephony.Sms.TYPE))
+
+                    messages.add(SMSReader.SMSMessage(
+                        id = cursor.getLong(cursor.getColumnIndexOrThrow(android.provider.Telephony.Sms._ID)),
+                        body = smsBody,
+                        sender = sender,
+                        timestamp = timestamp,
+                        type = type
+                    ))
+                } catch (e: Exception) {
+                    continue
+                }
+            }
+        }
+
+        messages
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+fun bulkExcludeMessages(
+    messagesToExclude: List<SMSReader.SMSMessage>,
+    excludedMessageIds: Set<Long>,
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    database: SMSDatabase,
+    excludedMessageDao: com.smsanalytics.smstransactionanalyzer.database.ExcludedMessageDao
+) {
+    scope.launch {
+        try {
+            val activeMessages = messagesToExclude.filter { !excludedMessageIds.contains(it.id) }
+            if (activeMessages.isEmpty()) {
+                Toast.makeText(context, "No messages to exclude", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            // Add all messages to excluded list
+            activeMessages.forEach { message ->
+                val excludedMessage = ExcludedMessage(
+                    messageId = message.id,
+                    body = message.body,
+                    sender = message.sender,
+                    timestamp = message.timestamp
+                )
+                excludedMessageDao.insertExcludedMessage(excludedMessage)
+            }
+
+            Toast.makeText(context, "${activeMessages.size} messages excluded successfully", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error bulk excluding messages: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+private fun performSmartSearch(message: SMSReader.SMSMessage, query: String): Boolean {
+    // Handle different search patterns
+    return when {
+        // Check if it's a regex pattern (contains regex special characters)
+        query.contains(Regex("[\\[\\]{}()*+?.\\\\^$|]")) -> {
+            try {
+                val regex = Regex(query, setOf(RegexOption.IGNORE_CASE))
+                regex.containsMatchIn(message.body) ||
+                regex.containsMatchIn(message.sender)
+            } catch (e: Exception) {
+                // Fall back to literal text search if regex is invalid
+                performLiteralSearch(message, query)
+            }
+        }
+        // Check for phone number search
+        query.matches(Regex("\\d{10,}")) -> {
+            message.sender.contains(query, ignoreCase = true)
+        }
+        // Check for amount search (₹, Rs, INR, etc.)
+        query.matches(Regex("\\d+[,.]?\\d*")) -> {
+            val amountRegex = Regex("\\b$query\\s*(?:INR|Rs|₹|USD|\\$)\\b|\\b(?:INR|Rs|₹|USD|\\$)\\s*$query\\b", setOf(RegexOption.IGNORE_CASE))
+            amountRegex.containsMatchIn(message.body)
+        }
+        // Default literal search
+        else -> performLiteralSearch(message, query)
+    }
+}
+
+private fun performLiteralSearch(message: SMSReader.SMSMessage, query: String): Boolean {
+    return message.body.contains(query, ignoreCase = true) ||
+           message.sender.contains(query, ignoreCase = true)
+}
+
+private fun shouldUseCachedData(lastAnalysis: com.smsanalytics.smstransactionanalyzer.model.AnalysisMetadata?, cachedTransactions: List<com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache>): Boolean {
+    if (lastAnalysis == null || cachedTransactions.isEmpty()) return false
+
+    // Use cache if analysis was done within the last hour
+    val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000)
+    return lastAnalysis.lastAnalysisDate > oneHourAgo
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MessageBrowserScreen() {
+fun MessageBrowserScreen(navController: androidx.navigation.NavController) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -60,6 +201,7 @@ fun MessageBrowserScreen() {
     var filteredMessages by remember { mutableStateOf<List<SMSReader.SMSMessage>>(emptyList()) }
     var monthSummaries by remember { mutableStateOf<List<MonthSummary>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var isLoadingMore by remember { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(TimeFilter.ALL_TIME) }
     var customDateRange by remember { mutableStateOf<DateRange?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -67,6 +209,9 @@ fun MessageBrowserScreen() {
     var excludedMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
+    var showBulkExcludeDialog by remember { mutableStateOf(false) }
+    var loadedMessageCount by remember { mutableStateOf(0) }
+    var totalMessageCount by remember { mutableStateOf(0) }
 
     val smsReader = remember { SMSReader(context) }
     val database = remember { SMSDatabase.getInstance(context) }
@@ -83,18 +228,98 @@ fun MessageBrowserScreen() {
         }
     }
 
-    // Load all messages on launch
+    // Load messages with cache-first approach
     LaunchedEffect(Unit) {
         if (smsReader.hasSMSPermission()) {
             scope.launch {
                 try {
-                    allMessages = smsReader.readAllSMS()
+                    // First, try to load from cache
+                    val cachedTransactions = database.smsAnalysisCacheDao().getCachedTransactions()
+                    val lastAnalysis = database.smsAnalysisCacheDao().getLastAnalysisMetadata()
+
+                    val shouldUseCache = shouldUseCachedData(lastAnalysis, cachedTransactions)
+
+                    if (shouldUseCache && cachedTransactions.isNotEmpty()) {
+                        // Use cached data - convert to SMSMessage format
+                        val cachedMessages = cachedTransactions.map { cache ->
+                            SMSReader.SMSMessage(
+                                id = cache.messageId,
+                                body = cache.messageBody,
+                                sender = cache.sender,
+                                timestamp = cache.timestamp,
+                                type = 1 // Default to inbox
+                            )
+                        }
+
+                        allMessages = cachedMessages
+                        loadedMessageCount = cachedMessages.size
+                        totalMessageCount = cachedMessages.size
+                        monthSummaries = createMonthSummaries(cachedMessages)
+
+                        // Apply current filters
+                        var filtered = filterMessages(selectedTab, allMessages, customDateRange)
+                        if (searchQuery.isNotEmpty()) {
+                            filtered = filtered.filter { message ->
+                                performSmartSearch(message, searchQuery)
+                            }
+                        }
+                        filteredMessages = filtered.sortedByDescending { it.timestamp }
+
+                        isLoading = false
+                        return@launch
+                    }
+
+                    // If no valid cache, load progressively from SMS
+                    // Start with an empty list and load progressively
+                    allMessages = emptyList()
+                    filteredMessages = emptyList()
+                    loadedMessageCount = 0
+
+                    // Get total count first (this is fast)
+                    totalMessageCount = getTotalMessageCount(context)
+                    if (totalMessageCount == 0) {
+                        isLoading = false
+                        return@launch
+                    }
+
+                    // Load messages in batches
+                    val batchSize = 50
+                    var offset = 0
+                    val loadedMessages = mutableListOf<SMSReader.SMSMessage>()
+
+                    while (offset < totalMessageCount) {
+                        isLoadingMore = offset > 0 // Show "loading more" for subsequent batches
+
+                        val batch = loadMessageBatch(context, offset, batchSize)
+                        if (batch.isEmpty()) break
+
+                        loadedMessages.addAll(batch)
+                        allMessages = loadedMessages.toList()
+
+                        // Update filtered messages with current batch
+                        var filtered = filterMessages(selectedTab, allMessages, customDateRange)
+                        if (searchQuery.isNotEmpty()) {
+                            filtered = filtered.filter { message ->
+                                performSmartSearch(message, searchQuery)
+                            }
+                        }
+                        filteredMessages = filtered.sortedByDescending { it.timestamp }
+
+                        loadedMessageCount = loadedMessages.size
+                        offset += batchSize
+
+                        // Small delay to show the loading progress
+                        kotlinx.coroutines.delay(100)
+                    }
+
+                    // Create month summaries after all messages are loaded
                     monthSummaries = createMonthSummaries(allMessages)
-                    filteredMessages = allMessages.sortedByDescending { it.timestamp }
+
                 } catch (e: Exception) {
                     Toast.makeText(context, "Error loading messages: ${e.message}", Toast.LENGTH_SHORT).show()
                 } finally {
                     isLoading = false
+                    isLoadingMore = false
                 }
             }
         } else {
@@ -110,16 +335,7 @@ fun MessageBrowserScreen() {
         // Apply search filter
         if (searchQuery.isNotEmpty()) {
             filtered = filtered.filter { message ->
-                try {
-                    // Try as regex first
-                    val regex = Regex(searchQuery, setOf(RegexOption.IGNORE_CASE))
-                    regex.containsMatchIn(message.body) ||
-                    regex.containsMatchIn(message.sender)
-                } catch (e: Exception) {
-                    // Fall back to simple text search
-                    message.body.contains(searchQuery, ignoreCase = true) ||
-                    message.sender.contains(searchQuery, ignoreCase = true)
-                }
+                performSmartSearch(message, searchQuery)
             }
         }
 
@@ -127,13 +343,35 @@ fun MessageBrowserScreen() {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Header
-        Text(
-            text = "Message Browser",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(16.dp)
-        )
+        // Header with navigation and bulk exclude buttons
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Message Browser",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Navigation to spending dashboard
+                IconButton(onClick = {
+                    navController.navigate("dashboard") {
+                        popUpTo("message_browser") { inclusive = false }
+                    }
+                }) {
+                    Text("📊", style = MaterialTheme.typography.titleMedium)
+                }
+                if (filteredMessages.isNotEmpty()) {
+                    IconButton(onClick = { showBulkExcludeDialog = true }) {
+                        Text("🚫", style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+        }
 
         // Search Bar
         Card(
@@ -152,7 +390,7 @@ fun MessageBrowserScreen() {
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     label = { Text("Search messages...") },
-                    placeholder = { Text("Enter words or regex") },
+                    placeholder = { Text("Enter text, phone numbers, amounts, or regex patterns") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     leadingIcon = {
@@ -294,30 +532,56 @@ fun MessageBrowserScreen() {
             }
         }
 
-        // Messages count and filter info
+        // Messages count and filter info with loading progress
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "${filteredMessages.size} messages",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${filteredMessages.size} messages",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
 
-                Text(
-                    text = getFilterDescription(selectedTab, customDateRange),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    Text(
+                        text = getFilterDescription(selectedTab, customDateRange),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Show loading progress
+                if (isLoading || isLoadingMore) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LinearProgressIndicator(
+                            progress = if (totalMessageCount > 0) loadedMessageCount.toFloat() / totalMessageCount.toFloat() else 0f,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isLoading) "Loading..." else "Loading more...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = "$loadedMessageCount / $totalMessageCount messages loaded",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
+                }
             }
         }
 
@@ -377,6 +641,39 @@ fun MessageBrowserScreen() {
                     )
                 }
             }
+        }
+
+        // Bulk exclude dialog
+        if (showBulkExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showBulkExcludeDialog = false },
+                title = { Text("Exclude All Filtered Messages") },
+                text = {
+                    Text("Are you sure you want to exclude all ${filteredMessages.size} filtered messages from analysis? This will prevent them from being counted in future spending calculations.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            bulkExcludeMessages(
+                                filteredMessages,
+                                excludedMessageIds,
+                                context,
+                                scope,
+                                database,
+                                excludedMessageDao
+                            )
+                            showBulkExcludeDialog = false
+                        }
+                    ) {
+                        Text("Exclude All")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBulkExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 

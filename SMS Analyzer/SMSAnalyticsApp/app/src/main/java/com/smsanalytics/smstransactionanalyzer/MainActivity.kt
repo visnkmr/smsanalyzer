@@ -49,6 +49,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 import android.util.Log
+import android.content.SharedPreferences
 
 enum class SortOption {
     AMOUNT_DESC, // Most spend
@@ -81,6 +82,7 @@ class MainActivity : ComponentActivity() {
     private var smsSortOption by mutableStateOf(SortOption.DATE_DESC)
     private var smsFilterOption by mutableStateOf("ALL") // "ALL", "DEBIT", "CREDIT"
     private var hasUnsavedChanges by mutableStateOf(false)
+    private lateinit var sharedPreferences: SharedPreferences
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -100,6 +102,7 @@ class MainActivity : ComponentActivity() {
         database = SMSDatabase.getInstance(this)
         vendorExtractor = VendorExtractor()
         senderExtractor = SenderExtractor()
+        sharedPreferences = getSharedPreferences("sms_analytics_prefs", MODE_PRIVATE)
 
         hasPermission = smsReader.hasSMSPermission()
 
@@ -123,6 +126,14 @@ class MainActivity : ComponentActivity() {
 
     private fun requestSMSPermission() {
         requestPermissionLauncher.launch(Manifest.permission.READ_SMS)
+    }
+
+    private fun getPreferredHomeScreen(): String {
+        return sharedPreferences.getString("home_screen", "message_browser") ?: "message_browser"
+    }
+
+    private fun setPreferredHomeScreen(screen: String) {
+        sharedPreferences.edit().putString("home_screen", screen).apply()
     }
 
     private fun loadTransactionData() {
@@ -331,8 +342,9 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun MainScreen() {
         val navController = rememberNavController()
+        val preferredHomeScreen = remember { getPreferredHomeScreen() }
 
-        NavHost(navController = navController, startDestination = "dashboard") {
+        NavHost(navController = navController, startDestination = preferredHomeScreen) {
             composable("dashboard") {
                 DashboardScreen(navController)
             }
@@ -346,7 +358,7 @@ class MainActivity : ComponentActivity() {
                 CategoryRulesScreen()
             }
             composable("message_browser") {
-                MessageBrowserScreen()
+                MessageBrowserScreen(navController)
             }
             composable("vendor_management") {
                 VendorManagementScreen(navController)
@@ -372,6 +384,9 @@ class MainActivity : ComponentActivity() {
             }
             composable("group_spending_overview") {
                 GroupSpendingOverviewScreen()
+            }
+            composable("settings") {
+                SettingsScreen(navController)
             }
         }
     }
@@ -478,6 +493,13 @@ class MainActivity : ComponentActivity() {
                             text = { Text("📤 Sender Management") },
                             onClick = {
                                 navController.navigate("sender_management")
+                                expanded = false
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("⚙️ Settings") },
+                            onClick = {
+                                navController.navigate("settings")
                                 expanded = false
                             }
                         )
@@ -1398,6 +1420,7 @@ class MainActivity : ComponentActivity() {
         var vendors by remember { mutableStateOf<List<com.smsanalytics.smstransactionanalyzer.model.Vendor>>(emptyList()) }
         var isLoading by remember { mutableStateOf(true) }
         var searchQuery by remember { mutableStateOf("") }
+        var showBulkExcludeDialog by remember { mutableStateOf(false) }
 
         // Load vendors when screen is displayed
         LaunchedEffect(Unit) {
@@ -1427,8 +1450,13 @@ class MainActivity : ComponentActivity() {
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
-                IconButton(onClick = { navController.navigate("dashboard") }) {
-                    Text("←")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showBulkExcludeDialog = true }) {
+                        Text("🚫", style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(onClick = { navController.navigate("dashboard") }) {
+                        Text("←")
+                    }
                 }
             }
 
@@ -1546,6 +1574,54 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // Bulk exclude dialog
+        if (showBulkExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showBulkExcludeDialog = false },
+                title = { Text("Exclude All Filtered Vendors") },
+                text = {
+                    val filteredVendors = if (searchQuery.isBlank()) {
+                        vendors
+                    } else {
+                        vendors.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                    }
+                    val sortedVendors = when (vendorSortOption) {
+                        SortOption.AMOUNT_DESC -> filteredVendors.sortedByDescending { it.totalSpent }
+                        SortOption.DATE_DESC -> filteredVendors.sortedByDescending { it.lastTransactionDate }
+                        SortOption.DATE_ASC -> filteredVendors.sortedBy { it.lastTransactionDate }
+                        else -> filteredVendors.sortedByDescending { it.transactionCount }
+                    }
+                    Text("Are you sure you want to exclude all ${sortedVendors.size} filtered vendors from analysis? This will hide all transactions from these vendors.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val filteredVendors = if (searchQuery.isBlank()) {
+                                vendors
+                            } else {
+                                vendors.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                            }
+                            val sortedVendors = when (vendorSortOption) {
+                                SortOption.AMOUNT_DESC -> filteredVendors.sortedByDescending { it.totalSpent }
+                                SortOption.DATE_DESC -> filteredVendors.sortedByDescending { it.lastTransactionDate }
+                                SortOption.DATE_ASC -> filteredVendors.sortedBy { it.lastTransactionDate }
+                                else -> filteredVendors.sortedByDescending { it.transactionCount }
+                            }
+                            bulkExcludeVendors(sortedVendors)
+                            showBulkExcludeDialog = false
+                        }
+                    ) {
+                        Text("Exclude All")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBulkExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
     }
 
     @Composable
@@ -1657,6 +1733,32 @@ class MainActivity : ComponentActivity() {
                 ).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, "Error updating vendor: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun bulkExcludeVendors(vendorsToExclude: List<com.smsanalytics.smstransactionanalyzer.model.Vendor>) {
+        lifecycleScope.launch {
+            try {
+                val activeVendors = vendorsToExclude.filter { !it.isExcluded }
+                if (activeVendors.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No vendors to exclude", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // Update all vendors to excluded
+                activeVendors.forEach { vendor ->
+                    database.vendorDao().updateVendorExclusion(vendor.id, true)
+                }
+
+                hasUnsavedChanges = true
+                Toast.makeText(
+                    this@MainActivity,
+                    "${activeVendors.size} vendors excluded successfully",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Error bulk excluding vendors: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -1932,8 +2034,19 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun VendorSMSDetailScreen(navController: androidx.navigation.NavController, vendorId: Long? = null, senderId: Long? = null, isVendor: Boolean) {
         var smsTransactions by remember { mutableStateOf<List<Transaction>>(emptyList()) }
+        var filteredTransactions by remember { mutableStateOf<List<Transaction>>(emptyList()) }
         var isLoading by remember { mutableStateOf(true) }
         var entityName by remember { mutableStateOf("") }
+        var showAdvancedFilters by remember { mutableStateOf(false) }
+        var showBulkExcludeDialog by remember { mutableStateOf(false) }
+
+        // Advanced search filters
+        var searchQuery by remember { mutableStateOf("") }
+        var minAmount by remember { mutableStateOf("") }
+        var maxAmount by remember { mutableStateOf("") }
+        var startDate by remember { mutableStateOf<Date?>(null) }
+        var endDate by remember { mutableStateOf<Date?>(null) }
+        var transactionTypeFilter by remember { mutableStateOf("ALL") } // "ALL", "DEBIT", "CREDIT"
 
         val entityId = if (isVendor) vendorId else senderId
         Log.d("VendorSMSDetailScreen", "Starting VendorSMSDetailScreen with entityId: $entityId, isVendor: $isVendor")
@@ -2034,6 +2147,59 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Filter transactions based on search criteria
+        LaunchedEffect(smsTransactions, searchQuery, minAmount, maxAmount, startDate, endDate, transactionTypeFilter) {
+            var filtered = smsTransactions
+
+            // Text search
+            if (searchQuery.isNotEmpty()) {
+                filtered = filtered.filter { transaction ->
+                    transaction.description.contains(searchQuery, ignoreCase = true) ||
+                    transaction.sender?.contains(searchQuery, ignoreCase = true) == true ||
+                    transaction.smsBody.contains(searchQuery, ignoreCase = true)
+                }
+            }
+
+            // Amount range filter
+            if (minAmount.isNotEmpty()) {
+                val min = minAmount.toDoubleOrNull()
+                if (min != null) {
+                    filtered = filtered.filter { it.amount >= min }
+                }
+            }
+
+            if (maxAmount.isNotEmpty()) {
+                val max = maxAmount.toDoubleOrNull()
+                if (max != null) {
+                    filtered = filtered.filter { it.amount <= max }
+                }
+            }
+
+            // Date range filter
+            if (startDate != null) {
+                filtered = filtered.filter { it.date >= startDate!! }
+            }
+
+            if (endDate != null) {
+                filtered = filtered.filter { it.date <= endDate!! }
+            }
+
+            // Transaction type filter
+            when (transactionTypeFilter) {
+                "DEBIT" -> filtered = filtered.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT }
+                "CREDIT" -> filtered = filtered.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT }
+            }
+
+            // Apply sorting
+            filtered = when (smsSortOption) {
+                SortOption.AMOUNT_DESC -> filtered.sortedByDescending { it.amount }
+                SortOption.DATE_DESC -> filtered.sortedByDescending { it.date }
+                else -> filtered.sortedBy { it.date }
+            }
+
+            filteredTransactions = filtered
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -2049,8 +2215,18 @@ class MainActivity : ComponentActivity() {
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
-                IconButton(onClick = { navController.navigate("dashboard") }) {
-                    Text("←")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (filteredTransactions.isNotEmpty()) {
+                        IconButton(onClick = { showBulkExcludeDialog = true }) {
+                            Text("🚫", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                    IconButton(onClick = { showAdvancedFilters = !showAdvancedFilters }) {
+                        Text(if (showAdvancedFilters) "🔼" else "🔽", style = MaterialTheme.typography.titleMedium)
+                    }
+                    IconButton(onClick = { navController.navigate("dashboard") }) {
+                        Text("←")
+                    }
                 }
             }
 
@@ -2063,6 +2239,110 @@ class MainActivity : ComponentActivity() {
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // Advanced Filters
+            if (showAdvancedFilters) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Advanced Filters",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Search Query
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = { Text("Search text") },
+                            placeholder = { Text("Search in messages, descriptions, senders") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            leadingIcon = { Text("🔍") }
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Amount Range
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = minAmount,
+                                onValueChange = { minAmount = it },
+                                label = { Text("Min Amount") },
+                                placeholder = { Text("₹0") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
+                            )
+
+                            OutlinedTextField(
+                                value = maxAmount,
+                                onValueChange = { maxAmount = it },
+                                label = { Text("Max Amount") },
+                                placeholder = { Text("₹∞") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Transaction Type Filter
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Transaction Type:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.width(120.dp)
+                            )
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = transactionTypeFilter == "ALL",
+                                    onClick = { transactionTypeFilter = "ALL" },
+                                    label = { Text("All") }
+                                )
+                                FilterChip(
+                                    selected = transactionTypeFilter == "DEBIT",
+                                    onClick = { transactionTypeFilter = "DEBIT" },
+                                    label = { Text("Debit") }
+                                )
+                                FilterChip(
+                                    selected = transactionTypeFilter == "CREDIT",
+                                    onClick = { transactionTypeFilter = "CREDIT" },
+                                    label = { Text("Credit") }
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Date Range (simplified)
+                        Text(
+                            text = "Date Range: Coming soon in advanced version",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Controls row for filtering and sorting
             Row(
@@ -2173,35 +2453,56 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
             } else {
-                // Filter and sort transactions
-                val filteredTransactions = when (smsFilterOption) {
-                    "DEBIT" -> smsTransactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT }
-                    "CREDIT" -> smsTransactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT }
-                    else -> smsTransactions
-                }
-
-                val sortedTransactions = when (smsSortOption) {
-                    SortOption.AMOUNT_DESC -> filteredTransactions.sortedByDescending { it.amount }
-                    SortOption.DATE_DESC -> filteredTransactions.sortedByDescending { it.date }
-                    else -> filteredTransactions.sortedBy { it.date }
-                }
-
                 Text(
-                    text = "Showing ${sortedTransactions.size} SMS messages",
+                    text = "Showing ${filteredTransactions.size} of ${smsTransactions.size} SMS messages",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                if (searchQuery.isNotEmpty() || minAmount.isNotEmpty() || maxAmount.isNotEmpty() || transactionTypeFilter != "ALL") {
+                    Text(
+                        text = "Filters applied",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 LazyColumn(
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(sortedTransactions) { transaction ->
+                    items(filteredTransactions) { transaction ->
                         VendorSMSDetailItem(transaction, entityName, isVendor)
                     }
                 }
             }
+        }
+
+        // Bulk exclude dialog
+        if (showBulkExcludeDialog) {
+            AlertDialog(
+                onDismissRequest = { showBulkExcludeDialog = false },
+                title = { Text("Exclude All Filtered Messages") },
+                text = {
+                    Text("Are you sure you want to exclude all ${filteredTransactions.size} filtered messages from analysis? This will prevent them from being counted in future spending calculations.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            bulkExcludeTransactions(filteredTransactions)
+                            showBulkExcludeDialog = false
+                        }
+                    ) {
+                        Text("Exclude All")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBulkExcludeDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 
@@ -2929,6 +3230,158 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this@MainActivity, "Vendors added to group successfully", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, "Error adding vendors: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun bulkExcludeTransactions(transactionsToExclude: List<Transaction>) {
+        lifecycleScope.launch {
+            try {
+                val activeTransactions = transactionsToExclude.filter { transaction ->
+                    // Check if transaction is not already excluded
+                    val transactionSignature = "${transaction.description}_${transaction.amount}_${transaction.date.time}"
+                    val signatureHash = transactionSignature.hashCode().toLong()
+                    val excludedIds = database.excludedMessageDao().getAllExcludedMessageIds()
+                    !excludedIds.contains(signatureHash)
+                }
+
+                if (activeTransactions.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No transactions to exclude", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                // Add all transactions to excluded list
+                activeTransactions.forEach { transaction ->
+                    val transactionSignature = "${transaction.description}_${transaction.amount}_${transaction.date.time}"
+                    val signatureHash = transactionSignature.hashCode().toLong()
+
+                    val excludedMessage = ExcludedMessage(
+                        messageId = signatureHash,
+                        body = transaction.description,
+                        sender = transaction.sender ?: "Unknown",
+                        timestamp = transaction.date.time
+                    )
+
+                    database.excludedMessageDao().insertExcludedMessage(excludedMessage)
+                }
+
+                hasUnsavedChanges = true
+                Toast.makeText(
+                    this@MainActivity,
+                    "${activeTransactions.size} transactions excluded successfully",
+                    Toast.LENGTH_SHORT
+                ).show()
+
+                // Refresh data
+                loadTransactionData()
+
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Error bulk excluding transactions: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    @Composable
+    fun SettingsScreen(navController: androidx.navigation.NavController) {
+        var selectedHomeScreen by remember { mutableStateOf(getPreferredHomeScreen()) }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = { navController.navigate("dashboard") }) {
+                    Text("←")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Home Screen Selection
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Home Screen",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    val homeScreenOptions = listOf(
+                        "dashboard" to "Spending Dashboard",
+                        "message_browser" to "Message Browser"
+                    )
+
+                    homeScreenOptions.forEach { (screenId, screenName) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedHomeScreen = screenId
+                                    setPreferredHomeScreen(screenId)
+                                    Toast.makeText(this@MainActivity, "Home screen updated to $screenName", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = selectedHomeScreen == screenId,
+                                onClick = {
+                                    selectedHomeScreen = screenId
+                                    setPreferredHomeScreen(screenId)
+                                    Toast.makeText(this@MainActivity, "Home screen updated to $screenName", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = screenName,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Info section
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "About",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "SMS Analytics App v1.0",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        text = "Analyze your SMS messages for spending insights",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
