@@ -7,31 +7,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import com.smsanalytics.smstransactionanalyzer.model.DailySummary
-import com.smsanalytics.smstransactionanalyzer.model.MonthlySummary
-import com.smsanalytics.smstransactionanalyzer.model.Transaction
-import com.smsanalytics.smstransactionanalyzer.model.YearlySummary
 import com.smsanalytics.smstransactionanalyzer.export.ExportFormat
 import com.smsanalytics.smstransactionanalyzer.export.CompressionType
-import java.text.SimpleDateFormat
-import java.util.*
-
-enum class SortOption {
-    AMOUNT_DESC, // Most spend
-    DATE_ASC,    // Oldest first
-    DATE_DESC    // Newest first (default)
-}
+import com.smsanalytics.smstransactionanalyzer.model.DailySummary
+import com.smsanalytics.smstransactionanalyzer.model.MonthlySummary
+import com.smsanalytics.smstransactionanalyzer.model.YearlySummary
+import com.smsanalytics.smstransactionanalyzer.model.Transaction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     navController: NavController,
-    // State
     transactions: List<Transaction>,
     dailySummaries: List<DailySummary>,
     monthlySummaries: List<MonthlySummary>,
@@ -39,150 +28,72 @@ fun DashboardScreen(
     hasPermission: Boolean,
     isLoading: Boolean,
     hasUnsavedChanges: Boolean,
-    // Callbacks
     onRequestPermission: () -> Unit,
     onSyncChanges: () -> Unit,
     onExcludeTransaction: (Transaction) -> Unit,
     onExportData: (ExportFormat, CompressionType) -> Unit
 ) {
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(16.dp)
     ) {
-        // Header section
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "SMS Analytics App",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Sync button - only show when there are changes
-                    if (hasUnsavedChanges) {
-                        IconButton(
-                            onClick = onSyncChanges,
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text("🔄", style = MaterialTheme.typography.titleMedium)
-                        }
+        // Header with sync button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "📊 Dashboard",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasUnsavedChanges) {
+                    IconButton(onClick = onSyncChanges) {
+                        Text("🔄", style = MaterialTheme.typography.titleMedium)
                     }
-
-                    // Navigation dropdown menu
-                    var expanded by remember { mutableStateOf(false) }
-                    IconButton(onClick = { expanded = true }) {
-                        Text("☰", style = MaterialTheme.typography.titleMedium)
-                    }
-
-                    DropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("🚫 Excluded Messages") },
-                            onClick = {
-                                navController.navigate("excluded_messages")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("💰 Credit Summaries") },
-                            onClick = {
-                                navController.navigate("credit_summaries")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("💬 Message Browser") },
-                            onClick = {
-                                navController.navigate("message_browser")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("⚙️ Category Rules") },
-                            onClick = {
-                                navController.navigate("category_rules")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("🏪 Vendor Management") },
-                            onClick = {
-                                navController.navigate("vendor_management")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("📱 Transaction SMS View") },
-                            onClick = {
-                                navController.navigate("transaction_sms_view")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("👥 Vendor Groups") },
-                            onClick = {
-                                navController.navigate("vendor_group_management")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("📊 Group Spending") },
-                            onClick = {
-                                navController.navigate("group_spending_overview")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("📤 Sender Management") },
-                            onClick = {
-                                navController.navigate("sender_management")
-                                expanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("⚙️ Settings") },
-                            onClick = {
-                                navController.navigate("settings")
-                                expanded = false
-                            }
-                        )
-                    }
+                }
+                IconButton(onClick = { navController.navigate("settings") }) {
+                    Text("⚙️", style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
 
-        // Main content sections
         if (!hasPermission) {
-            item {
-                PermissionRequestCard(onRequestPermission)
-            }
+            PermissionRequestCard(onRequestPermission)
         } else if (isLoading) {
-            item {
-                LoadingCard()
-            }
+            LoadingCard()
         } else {
-            item {
-                SpendingOverviewCard(transactions)
-            }
-            item {
-                ExportOptionsCard(onExportData)
-            }
-            item {
-                YearlySpendingList(yearlySummaries)
-            }
-            item {
-                MonthlySpendingList(monthlySummaries)
-            }
-            item {
-                DailySpendingList(dailySummaries, onExcludeTransaction)
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Spending Overview
+                item {
+                    SpendingOverviewCard(transactions)
+                }
+
+                // Export Options
+                item {
+                    ExportOptionsCard(onExportData)
+                }
+
+                // Daily Spending List
+                item {
+                    DailySpendingList(dailySummaries, onExcludeTransaction)
+                }
+
+                // Monthly Spending List
+                item {
+                    MonthlySpendingList(monthlySummaries)
+                }
+
+                // Yearly Spending List
+                item {
+                    YearlySpendingList(yearlySummaries)
+                }
             }
         }
     }
@@ -191,23 +102,26 @@ fun DashboardScreen(
 @Composable
 fun PermissionRequestCard(onRequestPermission: () -> Unit) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "SMS Permission Required",
+                text = "📱 SMS Permission Required",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onErrorContainer
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "This app needs SMS permission to analyze your transactions",
-                style = MaterialTheme.typography.bodyMedium
+                text = "This app needs SMS permission to analyze your transaction messages.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
             )
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = onRequestPermission) {
@@ -219,11 +133,7 @@ fun PermissionRequestCard(onRequestPermission: () -> Unit) {
 
 @Composable
 fun LoadingCard() {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -231,9 +141,8 @@ fun LoadingCard() {
             CircularProgressIndicator()
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Analyzing your SMS messages...",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = "Analyzing SMS messages...",
+                style = MaterialTheme.typography.bodyMedium
             )
         }
     }
@@ -241,81 +150,52 @@ fun LoadingCard() {
 
 @Composable
 fun SpendingOverviewCard(transactions: List<Transaction>) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Total Spending",
+                text = "💰 Spending Overview",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            val totalSpending = transactions.sumOf { it.amount }
-            val avgDaily = if (transactions.isNotEmpty()) {
-                val days = transactions.groupBy {
-                    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(it.date)
-                }.size
-                if (days > 0) totalSpending / days else 0.0
-            } else 0.0
+            val totalSpent = transactions.sumOf { it.amount }
+            val debitTransactions = transactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT }
+            val creditTransactions = transactions.filter { it.type == com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT }
 
-            val avgMonthly = if (transactions.isNotEmpty()) {
-                val months = transactions.groupBy {
-                    val cal = Calendar.getInstance().apply { time = it.date }
-                    "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.MONTH)}"
-                }.size
-                if (months > 0) totalSpending / months else 0.0
-            } else 0.0
-
-            Text("Total: ₹${String.format("%.2f", totalSpending)}")
-            Text("Daily Average: ₹${String.format("%.2f", avgDaily)}")
-            Text("Monthly Average: ₹${String.format("%.2f", avgMonthly)}")
-            Text("Transactions Found: ${transactions.size}")
+            Text("Total Transactions: ${transactions.size}")
+            Text("Total Debit: ₹${String.format("%.2f", debitTransactions.sumOf { it.amount })}")
+            Text("Total Credit: ₹${String.format("%.2f", creditTransactions.sumOf { it.amount })}")
+            Text("Net Spending: ₹${String.format("%.2f", totalSpent)}")
         }
     }
 }
 
 @Composable
 fun ExportOptionsCard(onExportData: (ExportFormat, CompressionType) -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Export Data",
-                style = MaterialTheme.typography.titleLarge,
+                text = "📤 Export Data",
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(8.dp))
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
+                    onClick = { onExportData(ExportFormat.JSON, CompressionType.NONE) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("JSON")
+                }
+                Button(
                     onClick = { onExportData(ExportFormat.CSV, CompressionType.NONE) },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Export CSV")
-                }
-
-                Button(
-                    onClick = { onExportData(ExportFormat.JSON, CompressionType.GZIP) },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Export JSON")
-                }
-
-                Button(
-                    onClick = { onExportData(ExportFormat.PROTOBUF, CompressionType.GZIP) },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Export Protobuf")
+                    Text("CSV")
                 }
             }
         }
@@ -328,30 +208,21 @@ fun DailySpendingList(
     dailySummaries: List<DailySummary>,
     onExcludeTransaction: (Transaction) -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Daily Spending",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            Text(
+                text = "📅 Daily Spending",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             if (dailySummaries.isEmpty()) {
-                Text("No transactions found")
+                Text("No daily summaries available", style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
-                    modifier = Modifier.height(300.dp)
+                    modifier = Modifier.height(300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(dailySummaries) { summary ->
                         DailySpendingItem(summary, onExcludeTransaction)
@@ -365,30 +236,21 @@ fun DailySpendingList(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MonthlySpendingList(monthlySummaries: List<MonthlySummary>) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Monthly Spending",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            Text(
+                text = "📊 Monthly Spending",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             if (monthlySummaries.isEmpty()) {
-                Text("No transactions found")
+                Text("No monthly summaries available", style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
-                    modifier = Modifier.height(300.dp)
+                    modifier = Modifier.height(300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(monthlySummaries) { summary ->
                         MonthlySpendingItem(summary)
@@ -401,30 +263,21 @@ fun MonthlySpendingList(monthlySummaries: List<MonthlySummary>) {
 
 @Composable
 fun YearlySpendingList(yearlySummaries: List<YearlySummary>) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Yearly Spending",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            Text(
+                text = "📈 Yearly Spending",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(modifier = Modifier.height(8.dp))
 
             if (yearlySummaries.isEmpty()) {
-                Text("No yearly data available")
+                Text("No yearly summaries available", style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
-                    modifier = Modifier.height(300.dp)
+                    modifier = Modifier.height(300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(yearlySummaries) { summary ->
                         YearlySpendingItem(summary)
@@ -437,7 +290,7 @@ fun YearlySpendingList(yearlySummaries: List<YearlySummary>) {
 
 @Composable
 fun DailySpendingItem(summary: DailySummary, onExcludeTransaction: (Transaction) -> Unit) {
-    val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault())
+    val dateFormat = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
     var showDetails by remember { mutableStateOf(false) }
 
     Column(
@@ -464,12 +317,6 @@ fun DailySpendingItem(summary: DailySummary, onExcludeTransaction: (Transaction)
 
         if (showDetails && summary.transactions.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "Transactions (${summary.transactions.size}):",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(4.dp))
             LazyColumn(
                 modifier = Modifier.height(150.dp)
             ) {
@@ -512,7 +359,6 @@ fun MonthlySpendingItem(summary: MonthlySummary) {
         if (showDetails && summary.dailySummaries.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Show monthly summary statistics
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -583,7 +429,6 @@ fun YearlySpendingItem(summary: YearlySummary) {
         if (showDetails && summary.monthlySummaries.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Show yearly summary statistics
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -675,10 +520,10 @@ fun TransactionDetailItem(transaction: Transaction, onExcludeTransaction: (Trans
                         transaction.description,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     Text(
-                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(transaction.date),
+                        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(transaction.date),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -738,14 +583,13 @@ fun TransactionDetailItem(transaction: Transaction, onExcludeTransaction: (Trans
 
 @Composable
 fun DailySummaryDetailItem(dailySummary: DailySummary) {
-    val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+    val dateFormat = java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault())
     var showTransactions by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp)
-            .clickable { showTransactions = !showTransactions },
+            .padding(vertical = 2.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(8.dp)) {

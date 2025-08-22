@@ -36,14 +36,10 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-        // Enable incremental compilation
-        incremental true
     }
 
     kotlinOptions {
         jvmTarget = '17'
-        // Enable incremental compilation for Kotlin
-        incremental true
         // Optimize for build performance
         freeCompilerArgs += [
             '-Xjvm-default=all',
@@ -58,11 +54,6 @@ android {
 
     composeOptions {
         kotlinCompilerExtensionVersion '1.4.3'
-    }
-
-    // Optimize build performance
-    dexingArtifactTransform {
-        // Enable dexing artifact transform for better incremental builds
     }
 
     packagingOptions {

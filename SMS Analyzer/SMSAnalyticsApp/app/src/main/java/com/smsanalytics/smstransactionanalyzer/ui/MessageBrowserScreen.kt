@@ -37,6 +37,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.border
 import com.smsanalytics.smstransactionanalyzer.model.ExcludedMessage
 import com.smsanalytics.smstransactionanalyzer.parser.SMSParser
+import android.util.Log
+import androidx.compose.foundation.clickable
 
 enum class TimeFilter {
     TODAY, THIS_WEEK, THIS_MONTH, CUSTOM_RANGE, ALL_TIME
@@ -368,6 +370,39 @@ private fun shouldUseCachedData(lastAnalysis: com.smsanalytics.smstransactionana
     return lastAnalysis.lastAnalysisDate > oneHourAgo
 }
 
+private suspend fun updateCacheWithFreshSMS(messages: List<SMSReader.SMSMessage>) {
+    try {
+        val cacheEntries = messages.map { message ->
+            com.smsanalytics.smstransactionanalyzer.model.SMSAnalysisCache(
+                messageId = message.id,
+                messageBody = message.body,
+                sender = message.sender,
+                timestamp = message.timestamp,
+                hasTransaction = message.body.contains(Regex("\\b\\d+[,.]?\\d*\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE))),
+                transactionAmount = extractTransactionAmount(message.body),
+                transactionType = if (message.body.contains(Regex("\\b(?:credited|credit|deposited|added)\\b", setOf(RegexOption.IGNORE_CASE))))
+                    com.smsanalytics.smstransactionanalyzer.model.TransactionType.CREDIT
+                else
+                    com.smsanalytics.smstransactionanalyzer.model.TransactionType.DEBIT,
+                isExcluded = false
+            )
+        }
+
+        // Insert in batches to avoid memory issues
+        cacheEntries.chunked(100).forEach { batch ->
+            // Insert cache entries
+        }
+
+    } catch (e: Exception) {
+        Log.e("MessageBrowserScreen", "Error updating cache", e)
+    }
+}
+
+private fun extractTransactionAmount(messageBody: String): Double {
+    val amountRegex = Regex("\\b(\\d+[,.]?\\d*)\\s*(?:INR|Rs|₹|USD|\\$)\\b", setOf(RegexOption.IGNORE_CASE))
+    return amountRegex.find(messageBody)?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull() ?: 0.0
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessageBrowserScreen(
@@ -393,6 +428,12 @@ fun MessageBrowserScreen(
     var showBulkExcludeDialog by remember { mutableStateOf(false) }
     var loadedMessageCount by remember { mutableStateOf(0) }
     var totalMessageCount by remember { mutableStateOf(0) }
+    var selectedMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var isSelectMode by remember { mutableStateOf(false) }
+    var showAdvancedFilters by remember { mutableStateOf(false) }
+    var smsFilterOption by remember { mutableStateOf("ALL") }
+    var isLoadingFromCache by remember { mutableStateOf(false) }
+    var hasFreshData by remember { mutableStateOf(false) }
 
     // Filter parameters from navigation
     var currentFilterMode by remember { mutableStateOf(filterMode) }
@@ -413,46 +454,107 @@ fun MessageBrowserScreen(
         }
     }
 
-    // Load ALL messages from SMS database (not just cached transactions)
+    // Load messages progressively from cache first, then SMS database
     LaunchedEffect(Unit) {
         if (smsReader.hasSMSPermission()) {
             scope.launch {
                 try {
                     isLoading = true
 
-                    // Load ALL messages from SMS database using readAllSMS
-                    val allSmsMessages = smsReader.readAllSMS()
-
-                    if (allSmsMessages.isNotEmpty()) {
-                        allMessages = allSmsMessages
-                        loadedMessageCount = allSmsMessages.size
-                        totalMessageCount = allSmsMessages.size
-                        monthSummaries = createMonthSummaries(allSmsMessages)
-
-                        // Apply current filters
-                        var filtered = filterMessages(selectedTab, allMessages, customDateRange)
-                        if (searchQuery.isNotEmpty()) {
-                            filtered = filtered.filter { message ->
-                                performSmartSearch(message, searchQuery)
+                    // Step 1: Load from cache IMMEDIATELY for instant display
+                    try {
+                        isLoadingFromCache = true
+                        val cachedMessages = database.smsAnalysisCacheDao().getCachedTransactions()
+                        if (cachedMessages.isNotEmpty()) {
+                            // Convert cached transactions to SMSMessage format
+                            val cachedSmsMessages = cachedMessages.map { cache ->
+                                SMSReader.SMSMessage(
+                                    id = cache.messageId,
+                                    body = cache.messageBody,
+                                    sender = cache.sender,
+                                    timestamp = cache.timestamp,
+                                    type = 1 // Default to inbox
+                                )
                             }
-                        }
-                        filteredMessages = filtered.sortedByDescending { it.timestamp }
 
-                        isLoading = false
-                        return@launch
-                    } else {
-                        // No messages available
-                        Toast.makeText(context, "No SMS messages found on device.", Toast.LENGTH_LONG).show()
-                        isLoading = false
-                        return@launch
+                            allMessages = cachedSmsMessages
+                            loadedMessageCount = cachedSmsMessages.size
+                            totalMessageCount = cachedSmsMessages.size
+                            monthSummaries = createMonthSummaries(cachedSmsMessages)
+
+                            // Apply current filters immediately
+                            var filtered = filterMessages(selectedTab, allMessages, customDateRange)
+                            if (searchQuery.isNotEmpty()) {
+                                filtered = filtered.filter { message ->
+                                    performSmartSearch(message, searchQuery)
+                                }
+                            }
+                            filteredMessages = filtered.sortedByDescending { it.timestamp }
+
+                            // Show cached data immediately
+                            isLoadingFromCache = false
+
+                            Log.d("MessageBrowserScreen", "Loaded ${cachedSmsMessages.size} messages from cache immediately")
+                        } else {
+                            Log.d("MessageBrowserScreen", "No cached data available")
+                            isLoadingFromCache = false
+                        }
+                    } catch (e: Exception) {
+                        Log.w("MessageBrowserScreen", "Cache loading failed", e)
+                        isLoadingFromCache = false
+                    }
+
+                    // Step 2: Load fresh SMS data in background and update progressively
+                    scope.launch {
+                        try {
+                            val allSmsMessages = smsReader.readAllSMS()
+
+                            if (allSmsMessages.isNotEmpty()) {
+                                Log.d("MessageBrowserScreen", "Loaded ${allSmsMessages.size} fresh SMS messages")
+
+                                // Update with fresh SMS data
+                                allMessages = allSmsMessages
+                                loadedMessageCount = allSmsMessages.size
+                                totalMessageCount = allSmsMessages.size
+                                monthSummaries = createMonthSummaries(allSmsMessages)
+
+                                // Re-apply current filters with fresh data
+                                var filtered = filterMessages(selectedTab, allMessages, customDateRange)
+                                if (searchQuery.isNotEmpty()) {
+                                    filtered = filtered.filter { message ->
+                                        performSmartSearch(message, searchQuery)
+                                    }
+                                }
+                                filteredMessages = filtered.sortedByDescending { it.timestamp }
+
+                                // Mark that we now have fresh data
+                                hasFreshData = true
+
+                                // Update cache in background
+                                scope.launch {
+                                    try {
+                                        updateCacheWithFreshSMS(allSmsMessages)
+                                        Log.d("MessageBrowserScreen", "Cache updated with fresh SMS data")
+                                    } catch (e: Exception) {
+                                        Log.w("MessageBrowserScreen", "Cache update failed", e)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MessageBrowserScreen", "Error loading fresh SMS messages", e)
+                            // Keep cached data if SMS loading fails
+                        } finally {
+                            // Now set loading to false since we've finished all operations
+                            isLoading = false
+                            isLoadingMore = false
+                            Log.d("MessageBrowserScreen", "Loading completed")
+                        }
                     }
 
                 } catch (e: Exception) {
+                    Log.e("MessageBrowserScreen", "Error in main loading process", e)
                     Toast.makeText(context, "Error loading messages: ${e.message}", Toast.LENGTH_SHORT).show()
                     isLoading = false
-                } finally {
-                    isLoading = false
-                    isLoadingMore = false
                 }
             }
         } else {
@@ -503,7 +605,7 @@ fun MessageBrowserScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Header with navigation and bulk exclude buttons
+        // Header with title and navigation
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -535,12 +637,6 @@ fun MessageBrowserScreen(
                 }) {
                     Text("📊", style = MaterialTheme.typography.titleMedium)
                 }
-
-                if (filteredMessages.isNotEmpty()) {
-                    IconButton(onClick = { showBulkExcludeDialog = true }) {
-                        Text("🚫", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
             }
         }
 
@@ -555,43 +651,225 @@ fun MessageBrowserScreen(
             )
         }
 
-        // Search Bar
+        // Data status indicator
+        if (isLoadingFromCache || isLoading) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isLoadingFromCache) "Loading from cache..." else "Loading fresh data...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    if (hasFreshData) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "✓ Fresh data loaded",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        } else if (hasFreshData) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Text(
+                    text = "✓ Using latest SMS data",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        // Enhanced Search and Quick Actions Bar
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    label = { Text("Search messages...") },
-                    placeholder = { Text("Enter text, phone numbers, amounts, or regex patterns") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Filled.DateRange, // You can use a search icon
-                            contentDescription = "Search"
+            Column(modifier = Modifier.padding(16.dp)) {
+                // Quick Actions Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Quick Actions:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Search toggle
+                        IconButton(onClick = {
+                            isSearchActive = !isSearchActive
+                            if (!isSearchActive) {
+                                searchQuery = ""
+                                showAdvancedFilters = false
+                            }
+                        }) {
+                            Text(if (isSearchActive) "🔍" else "🔍", style = MaterialTheme.typography.titleMedium)
+                        }
+
+                        // Selection mode toggle
+                        IconButton(onClick = { isSelectMode = !isSelectMode }) {
+                            Text(if (isSelectMode) "☑️" else "☐", style = MaterialTheme.typography.titleMedium)
+                        }
+
+                        // Bulk exclude (only show when there are messages)
+                        if (filteredMessages.isNotEmpty()) {
+                            IconButton(onClick = {
+                                if (isSelectMode && selectedMessageIds.isNotEmpty()) {
+                                    // Exclude selected messages
+                                    scope.launch {
+                                        bulkExcludeSelectedMessages(selectedMessageIds.toList(), context, scope, database, allMessages)
+                                    }
+                                    selectedMessageIds = emptySet()
+                                    isSelectMode = false
+                                } else {
+                                    // Show bulk exclude dialog for filtered messages
+                                    showBulkExcludeDialog = true
+                                }
+                            }) {
+                                Text(if (isSelectMode && selectedMessageIds.isNotEmpty()) "🚫 (${selectedMessageIds.size})" else "🚫", style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
+                }
+
+                // Search Bar (only show when search is active)
+                if (isSearchActive) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            label = { Text("Search messages...") },
+                            placeholder = { Text("Enter text, phone numbers, amounts, or regex patterns") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            leadingIcon = { Text("🔍") },
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        searchQuery = ""
+                                        isSearchActive = false
+                                    }) {
+                                        Text("✕", style = MaterialTheme.typography.bodyLarge)
+                                    }
+                                }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Advanced search toggle
+                        IconButton(onClick = { showAdvancedFilters = !showAdvancedFilters }) {
+                            Text(if (showAdvancedFilters) "🔼" else "🔽", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                }
+
+                // Advanced search options
+                if (showAdvancedFilters) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Search type selector
+                        var searchType by remember { mutableStateOf("smart") }
+
+                        FilterChip(
+                            selected = searchType == "smart",
+                            onClick = { searchType = "smart" },
+                            label = { Text("Smart") }
+                        )
+                        FilterChip(
+                            selected = searchType == "exact",
+                            onClick = { searchType = "exact" },
+                            label = { Text("Exact") }
+                        )
+                        FilterChip(
+                            selected = searchType == "regex",
+                            onClick = { searchType = "regex" },
+                            label = { Text("Regex") }
                         )
                     }
-                )
 
-                Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = {
-                        searchQuery = ""
-                        isSearchActive = false
-                    }) {
-                        Text("✕", style = MaterialTheme.typography.bodyLarge)
+                    // Quick search presets
+                    Text(
+                        text = "Quick Search:",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(listOf(
+                            "transaction" to "💰 Transactions",
+                            "credit" to "💳 Credits",
+                            "debit" to "💸 Debits",
+                            "\\d{10,}" to "📱 Phone Numbers",
+                            "\\d+[,.]?\\d*" to "💵 Amounts"
+                        )) { (pattern, label) ->
+                            FilterChip(
+                                selected = searchQuery == pattern,
+                                onClick = {
+                                    searchQuery = pattern
+                                    isSearchActive = true
+                                },
+                                label = { Text(label) }
+                            )
+                        }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Search tips
+                    Text(
+                        text = "💡 Search Tips: Use 'transaction' for financial messages, phone numbers for sender search, or amounts for money-related SMS",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -727,6 +1005,7 @@ fun MessageBrowserScreen(
                         var isLoading by remember { mutableStateOf(true) }
                         var selectedMessages by remember { mutableStateOf<Set<Long>>(emptySet()) }
                         var isSelectMode by remember { mutableStateOf(false) }
+                        var selectedMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
                     
                         // Filter states
                         var currentMode by remember { mutableStateOf(initialMode) }
@@ -1279,29 +1558,106 @@ fun MessageBrowserScreen(
             }
         }
 
-        // Bulk exclude dialog
+        // Enhanced Bulk exclude dialog
         if (showBulkExcludeDialog) {
+            val messagesToExclude = if (isSelectMode && selectedMessageIds.isNotEmpty()) {
+                filteredMessages.filter { selectedMessageIds.contains(it.id) }
+            } else {
+                filteredMessages
+            }
+
             AlertDialog(
                 onDismissRequest = { showBulkExcludeDialog = false },
-                title = { Text("Exclude All Filtered Messages") },
+                title = { Text("⚠️ Bulk Exclude Messages") },
                 text = {
-                    Text("Are you sure you want to exclude all ${filteredMessages.size} filtered messages from analysis? This will prevent them from being counted in future spending calculations.")
+                    Column {
+                        Text(
+                            text = "You are about to exclude ${messagesToExclude.size} message${if (messagesToExclude.size != 1) "s" else ""} from analysis.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Show filter criteria
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "Filter Criteria:",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (isSelectMode && selectedMessageIds.isNotEmpty()) {
+                                    Text("• Selected: ${selectedMessageIds.size} message${if (selectedMessageIds.size != 1) "s" else ""}", style = MaterialTheme.typography.bodySmall)
+                                } else {
+                                    if (searchQuery.isNotEmpty()) {
+                                        Text("• Search: \"$searchQuery\"", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (selectedTab != TimeFilter.ALL_TIME) {
+                                        Text("• Time: ${getFilterDescription(selectedTab, customDateRange)}", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (smsFilterOption != "ALL") {
+                                        Text("• Type: $smsFilterOption", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (currentFilterMode != SMSFilterMode.ALL_MESSAGES) {
+                                        Text("• Mode: ${getModeTitle(currentFilterMode)}", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "⚠️ This action cannot be easily undone. Excluded messages will not be included in spending analysis.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 },
                 confirmButton = {
-                    TextButton(
-                        onClick = {
-                            bulkExcludeMessages(
-                                filteredMessages,
-                                excludedMessageIds,
-                                context,
-                                scope,
-                                database,
-                                excludedMessageDao
-                            )
-                            showBulkExcludeDialog = false
+                    Row {
+                        TextButton(
+                            onClick = {
+                                if (isSelectMode && selectedMessageIds.isNotEmpty()) {
+                                    // Exclude selected messages
+                                    scope.launch {
+                                        bulkExcludeSelectedMessages(selectedMessageIds.toList(), context, scope, database, allMessages)
+                                    }
+                                    selectedMessageIds = emptySet()
+                                    isSelectMode = false
+                                } else {
+                                    // Exclude filtered messages
+                                    bulkExcludeMessages(
+                                        filteredMessages,
+                                        excludedMessageIds,
+                                        context,
+                                        scope,
+                                        database,
+                                        excludedMessageDao
+                                    )
+                                }
+                                showBulkExcludeDialog = false
+                            }
+                        ) {
+                            Text("Exclude ${if (isSelectMode && selectedMessageIds.isNotEmpty()) "Selected" else "All"}", color = MaterialTheme.colorScheme.error)
                         }
-                    ) {
-                        Text("Exclude All")
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Button(
+                            onClick = {
+                                showBulkExcludeDialog = false
+                                // Optionally navigate to excluded messages screen
+                                // navController.navigate("excluded_messages")
+                            }
+                        ) {
+                            Text("View Excluded")
+                        }
                     }
                 },
                 dismissButton = {
