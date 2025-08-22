@@ -46,20 +46,25 @@ class SMSReader(private val context: Context) {
             Telephony.Sms.DATE
         )
 
-        // Transaction-focused message filtering (no explicit OTP patterns)
-        val selection = "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ?"
-        val selectionArgs = arrayOf(
-            "%transaction%", "%payment%", "%debit%",
-            "%credit%", "%amount%", "%rs%", "%₹%", "%inr%", "%debited%"
-        )
+        // Load custom patterns from SharedPreferences
+        val sharedPreferences = context.getSharedPreferences("sms_filter_settings", Context.MODE_PRIVATE)
+        val enabledPatterns = sharedPreferences.getStringSet("enabled_patterns", null) ?:
+            setOf("%transaction%", "%payment%", "%debit%", "%credit%", "%amount%", "%rs%", "%₹%", "%inr%", "%debited%")
+        val customPatterns = sharedPreferences.getStringSet("custom_patterns", null) ?: setOf()
+
+        // Combine enabled default patterns with custom patterns
+        val allPatterns = (enabledPatterns + customPatterns).filter { it.isNotBlank() }
+
+        if (allPatterns.isEmpty()) {
+            // Fallback to default patterns if none are configured
+            onProgress(0, "No filter patterns configured, using defaults")
+            return@withContext emptyList()
+        }
+
+        // Build dynamic selection query based on available patterns
+        val selectionParts = allPatterns.map { "${Telephony.Sms.BODY} LIKE ?" }
+        val selection = selectionParts.joinToString(" OR ")
+        val selectionArgs = allPatterns.map { it.removeSurrounding("%") }.toTypedArray()
 
         try {
             onProgress(10, "Querying SMS database...")
@@ -246,17 +251,25 @@ class SMSReader(private val context: Context) {
             Telephony.Sms.DATE
         )
 
-        // Query for messages newer than the sinceTimestamp with transaction-focused filtering
-        val selection = "(${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ? OR " +
-                        "${Telephony.Sms.BODY} LIKE ?) AND ${Telephony.Sms.DATE} > ?"
-        val selectionArgs = arrayOf(
-            "%transaction%", "%payment%", "%debit%",
-            "%credit%", "%amount%", "%verification code%", sinceTimestamp.toString()
-        )
+        // Load custom patterns from SharedPreferences
+        val sharedPreferences = context.getSharedPreferences("sms_filter_settings", Context.MODE_PRIVATE)
+        val enabledPatterns = sharedPreferences.getStringSet("enabled_patterns", null) ?:
+            setOf("%transaction%", "%payment%", "%debit%", "%credit%", "%amount%", "%rs%", "%₹%", "%inr%", "%debited%")
+        val customPatterns = sharedPreferences.getStringSet("custom_patterns", null) ?: setOf()
+
+        // Combine enabled default patterns with custom patterns
+        val allPatterns = (enabledPatterns + customPatterns).filter { it.isNotBlank() }
+
+        if (allPatterns.isEmpty()) {
+            // Fallback to default patterns if none are configured
+            onProgress(0, "No filter patterns configured, using defaults")
+            return@withContext emptyList()
+        }
+
+        // Build dynamic selection query for incremental reading
+        val selectionParts = allPatterns.map { "(${Telephony.Sms.BODY} LIKE ?)" }
+        val selection = "(${selectionParts.joinToString(" OR ")}) AND ${Telephony.Sms.DATE} > ?"
+        val selectionArgs = (allPatterns.map { it.removeSurrounding("%") } + sinceTimestamp.toString()).toTypedArray()
 
         try {
             onProgress(10, "Querying for new SMS messages...")

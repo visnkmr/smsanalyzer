@@ -453,6 +453,7 @@ fun MessageBrowserScreen(
     var isLoadingFromCache by remember { mutableStateOf(false) }
     var hasFreshData by remember { mutableStateOf(false) }
     var currentFilteringJob by remember { mutableStateOf<Job?>(null) }
+    var showTimeFilters by remember { mutableStateOf(false) }
 
     // Filter parameters from navigation
     var currentFilterMode by remember { mutableStateOf(filterMode) }
@@ -828,6 +829,11 @@ fun MessageBrowserScreen(
                             Text(if (isSearchActive) "🔍" else "🔍", style = MaterialTheme.typography.titleMedium)
                         }
 
+                        // Time filter toggle
+                        IconButton(onClick = { showTimeFilters = !showTimeFilters }) {
+                            Text("📅", style = MaterialTheme.typography.titleMedium)
+                        }
+
                         // Selection mode toggle
                         IconButton(onClick = { isSelectMode = !isSelectMode }) {
                             Text(if (isSelectMode) "☑️" else "☐", style = MaterialTheme.typography.titleMedium)
@@ -963,34 +969,36 @@ fun MessageBrowserScreen(
             }
         }
 
-        // Tab row
-        TabRow(selectedTabIndex = selectedTab.ordinal) {
-            TimeFilter.values().forEach { filter ->
-                Tab(
-                    selected = selectedTab == filter,
-                    onClick = {
-                        selectedTab = filter
-                        if (filter != TimeFilter.CUSTOM_RANGE) {
-                            customDateRange = null
-                        }
-                    },
-                    text = {
-                        Text(
-                            when (filter) {
-                                TimeFilter.TODAY -> "Today"
-                                TimeFilter.THIS_WEEK -> "This Week"
-                                TimeFilter.THIS_MONTH -> "This Month"
-                                TimeFilter.CUSTOM_RANGE -> "Custom"
-                                TimeFilter.ALL_TIME -> "All Time"
+        // Tab row - only show when time filters are enabled
+        if (showTimeFilters) {
+            TabRow(selectedTabIndex = selectedTab.ordinal) {
+                TimeFilter.values().forEach { filter ->
+                    Tab(
+                        selected = selectedTab == filter,
+                        onClick = {
+                            selectedTab = filter
+                            if (filter != TimeFilter.CUSTOM_RANGE) {
+                                customDateRange = null
                             }
-                        )
-                    }
-                )
+                        },
+                        text = {
+                            Text(
+                                when (filter) {
+                                    TimeFilter.TODAY -> "Today"
+                                    TimeFilter.THIS_WEEK -> "This Week"
+                                    TimeFilter.THIS_MONTH -> "This Month"
+                                    TimeFilter.CUSTOM_RANGE -> "Custom"
+                                    TimeFilter.ALL_TIME -> "All Time"
+                                }
+                            )
+                        }
+                    )
+                }
             }
         }
 
-        // Custom date range picker
-        if (selectedTab == TimeFilter.CUSTOM_RANGE) {
+        // Custom date range picker - only show when time filters are enabled
+        if (showTimeFilters && selectedTab == TimeFilter.CUSTOM_RANGE) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1625,27 +1633,20 @@ fun MessageBrowserScreen(
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(filteredMessages) { message ->
-                    MessageItem(
+                    UnifiedMessageItem(
                         message = message,
-                        isExcluded = excludedMessageIds.contains(message.id),
-                        onExcludeToggle = { exclude ->
-                            scope.launch {
-                                withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    if (exclude) {
-                                        val excludedMessage = ExcludedMessage(
-                                            messageId = message.id,
-                                            body = message.body,
-                                            sender = message.sender,
-                                            timestamp = message.timestamp
-                                        )
-                                        excludedMessageDao.insertExcludedMessage(excludedMessage)
-                                        excludedMessageIds = excludedMessageIds + message.id
-                                    } else {
-                                        excludedMessageDao.deleteExcludedMessageById(message.id)
-                                        excludedMessageIds = excludedMessageIds - message.id
-                                    }
-                                }
+                        isSelected = selectedMessageIds.contains(message.id),
+                        isSelectMode = isSelectMode,
+                        onSelectionChanged = { selected: Boolean ->
+                            selectedMessageIds = if (selected) {
+                                selectedMessageIds + message.id
+                            } else {
+                                selectedMessageIds - message.id
                             }
+                        },
+                        isTransactionSMS = SMSParser().isTransactionSMS(message.body),
+                        onMessageClick = { messageId ->
+                            navController.navigate("message_detail/$messageId")
                         }
                     )
                 }
@@ -2102,7 +2103,16 @@ fun MonthSummaryCard(
                     modifier = Modifier.height(150.dp)
                 ) {
                     items(summary.messages) { message ->
-                        MessageItem(message)
+                        UnifiedMessageItem(
+                            message = message,
+                            isSelected = false,
+                            isSelectMode = false,
+                            onSelectionChanged = null,
+                            isTransactionSMS = SMSParser().isTransactionSMS(message.body),
+                            onMessageClick = { messageId ->
+                                navController.navigate("message_detail/$messageId")
+                            }
+                        )
                     }
                 }
             }

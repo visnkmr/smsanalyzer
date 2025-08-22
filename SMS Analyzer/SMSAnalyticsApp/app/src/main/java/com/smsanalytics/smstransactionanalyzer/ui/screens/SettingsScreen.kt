@@ -8,30 +8,65 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import android.widget.Toast
+import android.content.Context
+import android.content.SharedPreferences
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.smsanalytics.smstransactionanalyzer.sms.SMSReader
+import com.smsanalytics.smstransactionanalyzer.parser.SMSParser
+
+// Helper functions for persistence
+fun loadEnabledPatterns(sharedPreferences: SharedPreferences): Set<String> {
+    val saved = sharedPreferences.getStringSet("enabled_patterns", null)
+    return saved ?: setOf(
+        "%transaction%", "%payment%", "%debit%", "%credit%", "%amount%",
+        "%rs%", "%₹%", "%inr%", "%debited%"
+    )
+}
+
+fun loadCustomPatterns(sharedPreferences: SharedPreferences): Set<String> {
+    val saved = sharedPreferences.getStringSet("custom_patterns", null)
+    return saved ?: setOf()
+}
+
+fun saveEnabledPatterns(sharedPreferences: SharedPreferences, patterns: Set<String>) {
+    sharedPreferences.edit().putStringSet("enabled_patterns", patterns).apply()
+}
+
+fun saveCustomPatterns(sharedPreferences: SharedPreferences, patterns: Set<String>) {
+    sharedPreferences.edit().putStringSet("custom_patterns", patterns).apply()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(navController: NavController) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val sharedPreferences = remember { context.getSharedPreferences("sms_filter_settings", Context.MODE_PRIVATE) }
+    val smsReader = remember { SMSReader(context) }
+    val parser = remember { SMSParser() }
+
     var selectedHomeScreen by remember { mutableStateOf("message_browser") }
     var showAppMap by remember { mutableStateOf(false) }
     var showFilteringSettings by remember { mutableStateOf(false) }
     var showCustomFilters by remember { mutableStateOf(false) }
     var newCustomFilter by remember { mutableStateOf("") }
 
-    // Filter patterns state - now just enabled/disabled state
+    // Load saved patterns from SharedPreferences
     var enabledPatterns by remember {
-        mutableStateOf(setOf(
-            "%transaction%", "%payment%", "%debit%", "%credit%", "%amount%",
-            "%rs%", "%₹%", "%inr%", "%debited%"
-        ))
+        mutableStateOf(loadEnabledPatterns(sharedPreferences))
     }
 
     // Custom filter patterns
     var customPatterns by remember {
-        mutableStateOf(setOf<String>())
+        mutableStateOf(loadCustomPatterns(sharedPreferences))
     }
 
     LazyColumn(
@@ -106,6 +141,7 @@ fun SettingsScreen(navController: NavController) {
                         val appPages = listOf(
                             Triple("📊 Dashboard", "dashboard", "Main spending overview with yearly, monthly, and daily summaries"),
                             Triple("💬 Message Browser", "message_browser", "Browse and filter all SMS messages"),
+                            Triple("🧪 Filter Testing", "filter_testing", "Test filter patterns against actual SMS messages"),
                             Triple("🚫 Excluded Messages", "excluded_messages", "View and manage excluded transactions"),
                             Triple("💰 Credit Summaries", "credit_summaries", "View all credit transactions and summaries"),
                             Triple("⚙️ Category Rules", "category_rules", "Manage transaction categorization rules"),
@@ -211,6 +247,41 @@ fun SettingsScreen(navController: NavController) {
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
+                    }
+            
+                    // Filter Testing Section
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "🧪 Filter Pattern Testing",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+            
+                                Spacer(modifier = Modifier.height(8.dp))
+            
+                                Text(
+                                    text = "Test your filter patterns against actual SMS messages in a separate view",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+            
+                                Spacer(modifier = Modifier.height(16.dp))
+            
+                                Button(
+                                    onClick = { navController.navigate("filter_testing") },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("🧪 Open Filter Testing")
+                                }
+                            }
+                        }
+            
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
             }
@@ -346,7 +417,8 @@ fun SettingsScreen(navController: NavController) {
                             onClick = {
                                 val enabledCount = enabledPatterns.size
                                 val totalCount = allPatterns.size
-                                // Toast.makeText(this@MainActivity, "$enabledCount of $totalCount patterns enabled. Changes will apply on next SMS analysis.", Toast.LENGTH_LONG).show()
+                                saveEnabledPatterns(sharedPreferences, enabledPatterns)
+                                Toast.makeText(context, "Pattern settings saved! $enabledCount of $totalCount patterns enabled.", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {

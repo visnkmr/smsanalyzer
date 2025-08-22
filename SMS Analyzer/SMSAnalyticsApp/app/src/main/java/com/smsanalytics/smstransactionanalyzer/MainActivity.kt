@@ -48,6 +48,7 @@ import com.smsanalytics.smstransactionanalyzer.ui.screens.VendorGroupManagementS
 import com.smsanalytics.smstransactionanalyzer.ui.screens.GroupSpendingOverviewScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.RuleTestingScreen
 import com.smsanalytics.smstransactionanalyzer.ui.screens.MessageDetailScreen
+import com.smsanalytics.smstransactionanalyzer.ui.screens.FilterTestingScreen
 import com.smsanalytics.smstransactionanalyzer.database.SMSDatabase
 import com.smsanalytics.smstransactionanalyzer.util.VendorExtractor
 import com.smsanalytics.smstransactionanalyzer.util.SenderExtractor
@@ -686,6 +687,9 @@ class MainActivity : ComponentActivity() {
                         smsReader = smsReader
                     )
                 }
+            }
+            composable("filter_testing") {
+                FilterTestingScreen(navController = navController)
             }
         }
     }
