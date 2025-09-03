@@ -7,14 +7,11 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
-import com.smsanalytics.smstransactionanalyzer.model.Transaction
-import com.smsanalytics.smstransactionanalyzer.parser.SMSParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SMSReader(private val context: Context) {
 
-    private val parser = SMSParser()
     private val smsUri = Telephony.Sms.CONTENT_URI
 
     companion object {
@@ -28,111 +25,6 @@ class SMSReader(private val context: Context) {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    suspend fun readTransactionSMS(onProgress: (progress: Int, message: String) -> Unit = { _, _ -> }): List<Transaction> = withContext(Dispatchers.IO) {
-        if (!hasSMSPermission()) {
-            onProgress(0, "SMS permission not granted")
-            return@withContext emptyList()
-        }
-
-        onProgress(5, "Initializing SMS reader...")
-
-        val transactions = mutableListOf<Transaction>()
-        val contentResolver: ContentResolver = context.contentResolver
-
-        val projection = arrayOf(
-            Telephony.Sms._ID,
-            Telephony.Sms.BODY,
-            Telephony.Sms.ADDRESS,
-            Telephony.Sms.DATE
-        )
-
-        // Load custom patterns from SharedPreferences
-        val sharedPreferences = context.getSharedPreferences("sms_filter_settings", Context.MODE_PRIVATE)
-        val enabledPatterns = sharedPreferences.getStringSet("enabled_patterns", null) ?:
-            setOf("%transaction%", "%payment%", "%debit%", "%credit%", "%amount%", "%rs%", "%₹%", "%inr%", "%debited%")
-        val customPatterns = sharedPreferences.getStringSet("custom_patterns", null) ?: setOf()
-
-        // Combine enabled default patterns with custom patterns
-        val allPatterns = (enabledPatterns + customPatterns).filter { it.isNotBlank() }
-
-        if (allPatterns.isEmpty()) {
-            // Fallback to default patterns if none are configured
-            onProgress(0, "No filter patterns configured, using defaults")
-            return@withContext emptyList()
-        }
-
-        // Build dynamic selection query based on available patterns
-        val selectionParts = allPatterns.map { "${Telephony.Sms.BODY} LIKE ?" }
-        val selection = selectionParts.joinToString(" OR ")
-        val selectionArgs = allPatterns.map { it.removeSurrounding("%") }.toTypedArray()
-
-        try {
-            onProgress(10, "Querying SMS database...")
-
-            val cursor = contentResolver.query(
-                smsUri,
-                projection,
-                selection,
-                selectionArgs,
-                "${Telephony.Sms.DATE} DESC"
-            )
-
-            cursor?.use {
-                val totalMessages = it.count
-                var processedMessages = 0
-
-            onProgress(20, "Found $totalMessages potential transaction messages")
-
-                while (it.moveToNext()) {
-                    try {
-                        val smsBody = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.BODY))
-                        val sender = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.ADDRESS))
-                        val timestamp = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.DATE))
-
-                        processedMessages++
-                        val progress = 20 + (processedMessages * 70 / totalMessages)
-
-                        // Check if this looks like a transaction SMS
-                        if (parser.isTransactionSMS(smsBody)) {
-                            val transaction = parser.parseTransaction(smsBody, sender, timestamp)
-                            transaction?.let { transactions.add(it) }
-                        }
-
-                        // Show progress updates less frequently to prevent UI overhead
-                        if (processedMessages % 100 == 0 || processedMessages <= 10 || processedMessages == totalMessages) {
-                            val progress = 20 + (processedMessages * 70 / totalMessages)
-                            val progressMessage = when {
-                                processedMessages == totalMessages -> {
-                                    "Found ${transactions.size} transactions from $totalMessages messages"
-                                }
-                                processedMessages >= totalMessages * 0.75 -> {
-                                    "Processing messages... ($processedMessages / $totalMessages)"
-                                }
-                                else -> {
-                                    "Analyzing SMS messages... ($processedMessages / $totalMessages)"
-                                }
-                            }
-                            onProgress(progress, progressMessage)
-                        }
-                    } catch (e: Exception) {
-                        // Skip malformed SMS
-                        continue
-                    }
-                }
-            }
-
-            onProgress(90, "Finalizing transaction analysis...")
-            kotlinx.coroutines.delay(100) // Brief pause for UX
-
-            onProgress(100, "Message-based analysis complete! Found ${transactions.size} verified transactions")
-
-        } catch (e: Exception) {
-            onProgress(0, "Error reading SMS: ${e.message}")
-            return@withContext emptyList()
-        }
-
-        return@withContext transactions
-    }
 
     suspend fun readAllSMS(): List<SMSMessage> = withContext(Dispatchers.IO) {
         if (!hasSMSPermission()) {
@@ -233,111 +125,6 @@ class SMSReader(private val context: Context) {
         return@withContext messages
     }
 
-    suspend fun readTransactionSMSIncremental(sinceTimestamp: Long, onProgress: (progress: Int, message: String) -> Unit = { _, _ -> }): List<Transaction> = withContext(Dispatchers.IO) {
-        if (!hasSMSPermission()) {
-            onProgress(0, "SMS permission not granted")
-            return@withContext emptyList()
-        }
-
-        onProgress(5, "Initializing incremental SMS reader...")
-
-        val transactions = mutableListOf<Transaction>()
-        val contentResolver: ContentResolver = context.contentResolver
-
-        val projection = arrayOf(
-            Telephony.Sms._ID,
-            Telephony.Sms.BODY,
-            Telephony.Sms.ADDRESS,
-            Telephony.Sms.DATE
-        )
-
-        // Load custom patterns from SharedPreferences
-        val sharedPreferences = context.getSharedPreferences("sms_filter_settings", Context.MODE_PRIVATE)
-        val enabledPatterns = sharedPreferences.getStringSet("enabled_patterns", null) ?:
-            setOf("%transaction%", "%payment%", "%debit%", "%credit%", "%amount%", "%rs%", "%₹%", "%inr%", "%debited%")
-        val customPatterns = sharedPreferences.getStringSet("custom_patterns", null) ?: setOf()
-
-        // Combine enabled default patterns with custom patterns
-        val allPatterns = (enabledPatterns + customPatterns).filter { it.isNotBlank() }
-
-        if (allPatterns.isEmpty()) {
-            // Fallback to default patterns if none are configured
-            onProgress(0, "No filter patterns configured, using defaults")
-            return@withContext emptyList()
-        }
-
-        // Build dynamic selection query for incremental reading
-        val selectionParts = allPatterns.map { "(${Telephony.Sms.BODY} LIKE ?)" }
-        val selection = "(${selectionParts.joinToString(" OR ")}) AND ${Telephony.Sms.DATE} > ?"
-        val selectionArgs = (allPatterns.map { it.removeSurrounding("%") } + sinceTimestamp.toString()).toTypedArray()
-
-        try {
-            onProgress(10, "Querying for new SMS messages...")
-
-            val cursor = contentResolver.query(
-                smsUri,
-                projection,
-                selection,
-                selectionArgs,
-                "${Telephony.Sms.DATE} DESC"
-            )
-
-            cursor?.use {
-                val totalMessages = it.count
-                var processedMessages = 0
-
-                onProgress(20, "Found $totalMessages new potential messages")
-
-                while (it.moveToNext()) {
-                    try {
-                        val smsBody = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.BODY))
-                        val sender = it.getString(it.getColumnIndexOrThrow(Telephony.Sms.ADDRESS))
-                        val timestamp = it.getLong(it.getColumnIndexOrThrow(Telephony.Sms.DATE))
-
-                        processedMessages++
-                        val progress = 20 + (processedMessages * 70 / totalMessages)
-
-                        // Check if this looks like a transaction SMS
-                        if (parser.isTransactionSMS(smsBody)) {
-                            val transaction = parser.parseTransaction(smsBody, sender, timestamp)
-                            transaction?.let { transactions.add(it) }
-                        }
-
-                        // Show progress updates less frequently to prevent UI overhead
-                        if (processedMessages % 50 == 0 || processedMessages <= 5 || processedMessages == totalMessages) {
-                            val progress = 20 + (processedMessages * 70 / totalMessages)
-                            val progressMessage = when {
-                                processedMessages == totalMessages -> {
-                                    "Found ${transactions.size} transactions from $totalMessages new messages"
-                                }
-                                processedMessages >= totalMessages * 0.75 -> {
-                                    "Processing new messages... ($processedMessages / $totalMessages)"
-                                }
-                                else -> {
-                                    "Analyzing new SMS messages... ($processedMessages / $totalMessages)"
-                                }
-                            }
-                            onProgress(progress, progressMessage)
-                        }
-                    } catch (e: Exception) {
-                        // Skip malformed SMS
-                        continue
-                    }
-                }
-            }
-
-            onProgress(90, "Finalizing incremental transaction analysis...")
-            kotlinx.coroutines.delay(100) // Brief pause for UX
-
-            onProgress(100, "Incremental message analysis complete! Found ${transactions.size} new transactions")
-
-        } catch (e: Exception) {
-            onProgress(0, "Error reading incremental SMS: ${e.message}")
-            return@withContext emptyList()
-        }
-
-        return@withContext transactions
-    }
 
     suspend fun getSMSMessageById(messageId: Long): SMSMessage? = withContext(Dispatchers.IO) {
         if (!hasSMSPermission()) {
